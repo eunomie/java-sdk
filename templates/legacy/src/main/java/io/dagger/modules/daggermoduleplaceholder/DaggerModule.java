@@ -1,5 +1,6 @@
 package io.dagger.modules.daggermoduleplaceholder;
 
+import static io.dagger.core.Core.core;
 import static io.dagger.sdk.Dagger.dag;
 
 import io.dagger.core.Container;
@@ -16,14 +17,14 @@ public class DaggerModule {
   /** Returns a container that echoes whatever string argument is provided */
   @Function
   public Container containerEcho(String stringArg) {
-    return dag().container().from("alpine:latest").withExec(List.of("echo", stringArg));
+    return core(dag()).container().from("alpine:latest").withExec(List.of("echo", stringArg));
   }
 
   /** Returns lines that match a pattern in the files of the provided Directory */
   @Function
   public String grepDir(Directory directoryArg, String pattern)
       throws InterruptedException, ExecutionException, DaggerQueryException {
-    return dag()
+    return core(dag())
         .container()
         .from("alpine:latest")
         .withMountedDirectory("/mnt", directoryArg)

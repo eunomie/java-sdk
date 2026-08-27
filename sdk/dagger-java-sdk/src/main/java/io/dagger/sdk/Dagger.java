@@ -1,24 +1,22 @@
 package io.dagger.sdk;
 
-import io.dagger.core.Client;
-import io.dagger.sdk.engineconn.Connection;
 import java.io.IOException;
 
 public class Dagger {
-  private static Client dag = null;
+  private static Session dag = null;
 
   /**
-   * Returns the global Dagger client instance.
+   * The global Dagger session.
    *
-   * <p>Contrary to {@code connect}, this is managed as a singleton. It will always return the same
-   * instance.
+   * <p>Managed as a process-wide singleton: always the same instance. The typed core API is reached
+   * through it — {@code core(dag())} — and a dependency through {@code <dep>(dag())}.
    *
-   * @return Global Dagger client
+   * @return the shared session
    */
-  public static synchronized Client dag() {
+  public static synchronized Session dag() {
     if (dag == null) {
       try {
-        dag = new Client(Connection.get(System.getProperty("user.dir")));
+        dag = Session.connect(System.getProperty("user.dir"), false);
       } catch (IOException e) {
         throw new RuntimeException("Could not connect to Dagger engine", e);
       }
@@ -27,47 +25,34 @@ public class Dagger {
   }
 
   /**
-   * Opens connection with a Dagger engine.
+   * Open a new session with a Dagger engine, to close in a try-with-resources.
    *
-   * @return The Dagger API entrypoint
-   * @throws IOException
+   * @return a session
    */
-  public static AutoCloseableClient connect() throws IOException {
+  public static Session connect() throws IOException {
     return connect(System.getProperty("user.dir"), false);
   }
 
   /**
-   * Opens connection with a Dagger engine.
-   *
    * @param loadWorkspaceModules whether to opt into loading workspace modules
-   * @return The Dagger API entrypoint
-   * @throws IOException
    */
-  public static AutoCloseableClient connect(boolean loadWorkspaceModules) throws IOException {
+  public static Session connect(boolean loadWorkspaceModules) throws IOException {
     return connect(System.getProperty("user.dir"), loadWorkspaceModules);
   }
 
   /**
-   * Opens connection with a Dagger engine.
-   *
    * @param workingDir the host working directory
-   * @return The Dagger API entrypoint
-   * @throws IOException
    */
-  public static AutoCloseableClient connect(String workingDir) throws IOException {
+  public static Session connect(String workingDir) throws IOException {
     return connect(workingDir, false);
   }
 
   /**
-   * Opens connection with a Dagger engine.
-   *
    * @param workingDir the host working directory
    * @param loadWorkspaceModules whether to opt into loading workspace modules
-   * @return The Dagger API entrypoint
-   * @throws IOException
    */
-  public static AutoCloseableClient connect(String workingDir, boolean loadWorkspaceModules)
+  public static Session connect(String workingDir, boolean loadWorkspaceModules)
       throws IOException {
-    return new AutoCloseableClient(Connection.get(workingDir, loadWorkspaceModules));
+    return Session.connect(workingDir, loadWorkspaceModules);
   }
 }

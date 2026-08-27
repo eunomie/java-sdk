@@ -26,8 +26,8 @@ class ModuleClientCodegenTest {
       throws Exception {
     String hello = generate(Fixtures.clientSchema("hello", "Hello", "hello", "asHello"), LOCAL);
     assertThat(hello)
-        .contains("public static Hello from(Client dag, String name)")
-        .contains("public static Hello from(Client dag, String name, HelloArguments optArgs)")
+        .contains("public static Hello from(Session dag, String name)")
+        .contains("public static Hello from(Session dag, String name, HelloArguments optArgs)")
         .contains("QueryBuilder root = dag.queryBuilder().root();")
         .contains(
             "ModuleBinding.ensureServed(root, \"hello\", \"LOCAL_SOURCE\", \"dagger/modules/hello\", \"\");")
@@ -38,9 +38,9 @@ class ModuleClientCodegenTest {
   void theAliasIsNamedAfterTheModuleAndDelegates() throws Exception {
     String hello = generate(Fixtures.clientSchema("hello", "Hello", "hello", "asHello"), LOCAL);
     assertThat(hello)
-        .contains("public static Hello hello(Client dag, String name)")
+        .contains("public static Hello hello(Session dag, String name)")
         .contains("return from(dag, name);")
-        .contains("public static Hello hello(Client dag, String name, HelloArguments optArgs)")
+        .contains("public static Hello hello(Session dag, String name, HelloArguments optArgs)")
         .contains("return from(dag, name, optArgs);");
   }
 
@@ -99,7 +99,7 @@ class ModuleClientCodegenTest {
     assertThat(entryPoint.rootTypeName()).isEqualTo("E2E");
     assertThat(entryPoint.entryField().getName()).isEqualTo("e2E");
     String root = generate(Fixtures.clientSchema("e2e", "E2E", "e2E", "asE2E"), e2e);
-    assertThat(root).contains("public class E2E").contains("public static E2E e2E(Client dag");
+    assertThat(root).contains("public class E2E").contains("public static E2E e2E(Session dag");
   }
 
   @Test
@@ -151,7 +151,7 @@ class ModuleClientCodegenTest {
         generate(
             Fixtures.clientSchema("hello", "Hello", "hello", "asHello", "dag", "builder"), LOCAL);
     assertThat(hello)
-        .contains("public static Hello from(Client dag, String _dag)")
+        .contains("public static Hello from(Session dag, String _dag)")
         .contains("builder.add(\"dag\", _dag)")
         .contains("public HelloArguments withBuilder(String _builder)");
 
@@ -226,9 +226,9 @@ class ModuleClientCodegenTest {
             + " io.dagger.sdk.exception.DaggerQueryException {} }",
         "io.dagger.sdk.exception.DaggerQueryException",
         "package io.dagger.sdk.exception; public class DaggerQueryException extends Exception {}",
-        "io.dagger.core.Client",
-        "package io.dagger.core; public class Client {"
-            + " public io.dagger.sdk.QueryBuilder queryBuilder() { return null; } }",
+        "io.dagger.sdk.Session",
+        "package io.dagger.sdk; public final class Session {"
+            + " public QueryBuilder queryBuilder() { return null; } }",
         "io.dagger.core.Binding",
         "package io.dagger.core; public class Binding {"
             + " public io.dagger.sdk.QueryBuilder queryBuilder() { return null; } }");

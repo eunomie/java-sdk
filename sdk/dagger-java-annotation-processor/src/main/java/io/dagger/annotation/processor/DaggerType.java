@@ -10,6 +10,9 @@ import java.util.Set;
 import javax.lang.model.type.TypeKind;
 
 public abstract class DaggerType {
+
+  private static final com.palantir.javapoet.ClassName CORE =
+      com.palantir.javapoet.ClassName.get("io.dagger.core", "Core");
   protected static Set<String> knownEnums = Set.of();
 
   public static void setKnownEnums(Set<String> enums) {
@@ -126,7 +129,8 @@ public abstract class DaggerType {
 
     @Override
     CodeBlock toDaggerTypeDef() {
-      return CodeBlock.of("$T.dag().typeDef().withEnum($S)", Dagger.class, simpleName);
+      return CodeBlock.of(
+          "$T.from($T.dag()).typeDef().withEnum($S)", CORE, Dagger.class, simpleName);
     }
 
     @Override
@@ -155,7 +159,8 @@ public abstract class DaggerType {
       CodeBlock.Builder cb =
           CodeBlock.builder()
               .add(
-                  "$T.dag().typeDef().withKind($T.$L)",
+                  "$T.from($T.dag()).typeDef().withKind($T.$L)",
+                  CORE,
                   Dagger.class,
                   TypeDefKind.class,
                   "%s_KIND".formatted(name.toUpperCase()));
@@ -202,7 +207,8 @@ public abstract class DaggerType {
 
     @Override
     CodeBlock toDaggerTypeDef() {
-      return CodeBlock.of("$T.dag().typeDef().withScalar($S)", Dagger.class, simpleName);
+      return CodeBlock.of(
+          "$T.from($T.dag()).typeDef().withScalar($S)", CORE, Dagger.class, simpleName);
     }
 
     @Override
@@ -245,7 +251,8 @@ public abstract class DaggerType {
 
     @Override
     CodeBlock toDaggerTypeDef() {
-      return CodeBlock.of("$T.dag().typeDef().withObject($S)", Dagger.class, simpleName);
+      return CodeBlock.of(
+          "$T.from($T.dag()).typeDef().withObject($S)", CORE, Dagger.class, simpleName);
     }
 
     @Override
@@ -265,7 +272,7 @@ public abstract class DaggerType {
     CodeBlock toDaggerTypeDef() {
       CodeBlock.Builder cb =
           CodeBlock.builder()
-              .add("$T.dag().typeDef().withListOf(", Dagger.class)
+              .add("$T.from($T.dag()).typeDef().withListOf(", CORE, Dagger.class)
               .add(of(innerName).toDaggerTypeDef())
               .add(")");
       return cb.build();
@@ -301,7 +308,7 @@ public abstract class DaggerType {
     CodeBlock toDaggerTypeDef() {
       CodeBlock.Builder cb =
           CodeBlock.builder()
-              .add("$T.dag().typeDef().withListOf(", Dagger.class)
+              .add("$T.from($T.dag()).typeDef().withListOf(", CORE, Dagger.class)
               .add(of(innerName).toDaggerTypeDef())
               .add(")");
       return cb.build();

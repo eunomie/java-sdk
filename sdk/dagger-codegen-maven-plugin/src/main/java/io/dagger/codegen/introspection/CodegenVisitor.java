@@ -16,7 +16,8 @@ public class CodegenVisitor implements SchemaVisitor {
   private final IDAbleVisitor idAbleVisitor;
 
   /**
-   * @param entryPoint the module entry point to emit on its root type, or null when generating core
+   * @param entryPoint the entry point to emit on its root type: a module client's, or core's on
+   *     {@code Core}
    */
   public CodegenVisitor(
       Schema schema,

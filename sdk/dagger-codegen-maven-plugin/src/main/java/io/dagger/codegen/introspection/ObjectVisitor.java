@@ -77,28 +77,6 @@ class ObjectVisitor extends AbstractVisitor {
     }
 
     if ("Query".equals(type.getName())) {
-      MethodSpec constructor =
-          MethodSpec.constructorBuilder()
-              .addModifiers(Modifier.PUBLIC)
-              .addParameter(registry().runtime("engineconn", "Connection"), "connection")
-              .addStatement("this.connection = connection")
-              .addStatement(
-                  "this.queryBuilder = new $T(connection.getGraphQLClient())",
-                  registry().runtime("QueryBuilder"))
-              .build();
-      classBuilder.addMethod(constructor);
-      classBuilder.addField(
-          FieldSpec.builder(
-                  registry().runtime("engineconn", "Connection"), "connection", Modifier.PRIVATE)
-              .build());
-      MethodSpec closeMethod =
-          MethodSpec.methodBuilder("close")
-              .addException(Exception.class)
-              .addModifiers(Modifier.PUBLIC)
-              .addStatement("this.connection.close()")
-              .build();
-      classBuilder.addMethod(closeMethod);
-
       // loadObjectFromID: load any object by its ID using node(id:) + inline fragment
       classBuilder.addMethod(
           MethodSpec.methodBuilder("loadObjectFromID")
@@ -120,18 +98,6 @@ class ObjectVisitor extends AbstractVisitor {
               .nextControlFlow("catch (Exception e)")
               .addStatement("throw new RuntimeException(\"Failed to load object from ID\", e)")
               .endControlFlow()
-              .build());
-
-      // nodeQueryBuilder: create a QueryBuilder for node(id:) + inline fragment
-      classBuilder.addMethod(
-          MethodSpec.methodBuilder("nodeQueryBuilder")
-              .addModifiers(Modifier.PUBLIC)
-              .returns(registry().runtime("QueryBuilder"))
-              .addParameter(ClassName.get(String.class), "typeName")
-              .addParameter(registry().forType("ID"), "id")
-              .addJavadoc(
-                  "Create a QueryBuilder for node(id:) scoped to the given type via an inline fragment.\n")
-              .addStatement("return this.queryBuilder.chainNode(typeName, id)")
               .build());
     } else {
       // Object constructor for JSON deserialization
@@ -261,12 +227,43 @@ class ObjectVisitor extends AbstractVisitor {
   }
 
   /**
-   * The module entry point on its root type: {@code from(Client, <constructor args>)} serves the
-   * bound module and returns its root; the alias named after the module delegates to it, for a
-   * static import; and one static shim per field the module adds to a core type, taking that core
-   * object as its first argument, since Java has no extension methods.
+   * Core is reached like a module client but serves nothing: {@code Core.from(session)} wraps the
+   * session's query builder, and {@code core(session)} is the alias for a static import.
+   */
+  private void buildCoreEntryPoint(TypeSpec.Builder classBuilder) {
+    ClassName session = registry().runtime("Session");
+    ClassName core = registry().forType("Query");
+    MethodSpec from =
+        MethodSpec.methodBuilder("from")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addParameter(session, "session")
+            .returns(core)
+            .addJavadoc("The core API over {@code session}.\n")
+            .addStatement("return new $T(session.queryBuilder())", core)
+            .build();
+    classBuilder.addMethod(from);
+    classBuilder.addMethod(
+        MethodSpec.methodBuilder("core")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addParameter(session, "session")
+            .returns(core)
+            .addJavadoc("Alias for {@link #from}, for a static import: {@code core(dag())}.\n")
+            .addStatement("return from(session)")
+            .build());
+  }
+
+  /**
+   * The entry point on a root type: for a module client, {@code from(Session, <constructor args>)}
+   * serves the bound module and returns its root, the alias named after the module delegates to it
+   * for a static import, and one static shim is emitted per field the module adds to a core type,
+   * taking that core object as its first argument since Java has no extension methods; for core,
+   * {@link #buildCoreEntryPoint}.
    */
   private void buildEntryPoint(TypeSpec.Builder classBuilder, Type type) {
+    if (entryPoint.isCore()) {
+      buildCoreEntryPoint(classBuilder);
+      return;
+    }
     ClientBinding binding = entryPoint.binding();
     CodeBlock serve =
         CodeBlock.of(
@@ -277,7 +274,7 @@ class ObjectVisitor extends AbstractVisitor {
             binding.ref(),
             binding.pin());
     Field entry = entryPoint.entryField();
-    Receiver dag = new Receiver(registry().forType("Query"), "dag", "from", serve);
+    Receiver dag = new Receiver(registry().runtime("Session"), "dag", "from", serve);
     if (entry.hasOptionalArgs()) {
       buildFieldArgumentsHelpers(classBuilder, entry, type, dag);
       classBuilder.addMethod(alias(buildFieldMethod(classBuilder, entry, true, dag), entry));

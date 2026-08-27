@@ -1,5 +1,6 @@
 package io.dagger.modules.daggermoduleplaceholder;
 
+import static io.dagger.core.Core.core;
 import static io.dagger.sdk.Dagger.dag;
 
 import io.dagger.core.Container;
@@ -27,7 +28,7 @@ public class DaggerModule {
   /** A container with the workspace source, ready to build. */
   @Function
   public Container container() {
-    return dag()
+    return core(dag())
     .container()
     .from(this.baseImageAddress)
     .withDirectory("/src", this.source)

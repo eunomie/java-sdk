@@ -15,7 +15,7 @@ class DaggerTypeTest {
 
     assertThat(type.toDaggerTypeDef().toString())
         .isEqualTo(
-            "io.dagger.sdk.Dagger.dag().typeDef().withObject(\"Container\").withOptional(true)");
+            "io.dagger.core.Core.from(io.dagger.sdk.Dagger.dag()).typeDef().withObject(\"Container\").withOptional(true)");
     assertThat(type.toJavaType().toString())
         .isEqualTo("java.util.Optional<io.dagger.core.Container>");
     assertThat(type.valueForSerialization("result").toString()).isEqualTo("result.orElse(null)");
@@ -26,7 +26,8 @@ class DaggerTypeTest {
     DaggerType type = declared("io.dagger.core.Container");
 
     assertThat(type.toDaggerTypeDef().toString())
-        .isEqualTo("io.dagger.sdk.Dagger.dag().typeDef().withObject(\"Container\")");
+        .isEqualTo(
+            "io.dagger.core.Core.from(io.dagger.sdk.Dagger.dag()).typeDef().withObject(\"Container\")");
     assertThat(type.valueForSerialization("result").toString()).isEqualTo("result");
   }
 
@@ -44,7 +45,7 @@ class DaggerTypeTest {
 
     assertThat(DaggerType.of(field.type()).toDaggerTypeDef().toString())
         .isEqualTo(
-            "io.dagger.sdk.Dagger.dag().typeDef().withObject(\"Container\").withOptional(true)");
+            "io.dagger.core.Core.from(io.dagger.sdk.Dagger.dag()).typeDef().withObject(\"Container\").withOptional(true)");
   }
 
   private static DaggerType declared(String typeName) {

@@ -81,7 +81,11 @@ public final class Generator {
         log.accept(String.format("Generating %s (%d types)", CORE_PACKAGE, core.types().size()));
         core.visit(
             new CodegenVisitor(
-                schema, TypeRegistry.core(CORE_PACKAGE, RUNTIME_PACKAGE), null, out, encoding));
+                schema,
+                TypeRegistry.core(CORE_PACKAGE, RUNTIME_PACKAGE),
+                ClientEntryPoint.core(core),
+                out,
+                encoding));
       } else {
         SchemaPartition client = SchemaPartition.client(schema, entry.module());
         ClientEntryPoint entryPoint = new ClientEntryPoint(client, entry.binding());

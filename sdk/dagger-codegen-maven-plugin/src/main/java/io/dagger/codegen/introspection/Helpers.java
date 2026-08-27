@@ -167,7 +167,7 @@ public class Helpers {
   /** The Java simple name generated for a GraphQL type name. */
   static String formatName(String graphqlName) {
     if ("Query".equals(graphqlName)) {
-      return "Client";
+      return "Core";
     } else {
       return capitalize(graphqlName);
     }

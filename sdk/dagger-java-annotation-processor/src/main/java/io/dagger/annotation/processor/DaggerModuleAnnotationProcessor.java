@@ -84,6 +84,9 @@ import javax.lang.model.util.Elements;
 @AutoService(Processor.class)
 public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
 
+  private static final com.palantir.javapoet.ClassName CORE =
+      com.palantir.javapoet.ClassName.get("io.dagger.core", "Core");
+
   private Elements elementUtils;
 
   @Override
@@ -286,7 +289,7 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
 
   private List<ParameterInfo> parseParameters(ExecutableElement elt) {
     return elt.getParameters().stream()
-        .filter(param -> !param.asType().toString().equals("io.dagger.core.Client"))
+        .filter(param -> !param.asType().toString().equals("io.dagger.core.Core"))
         .map(
             param -> {
               TypeMirror tm = param.asType();
@@ -382,13 +385,21 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
               .addException(ExecutionException.class)
               .addException(DaggerQueryException.class)
               .addException(InterruptedException.class)
-              .addCode("$T module = $T.dag().module()", io.dagger.core.Module.class, Dagger.class);
+              .addCode(
+                  "$T module = $T.from($T.dag()).module()",
+                  io.dagger.core.Module.class,
+                  CORE,
+                  Dagger.class);
       if (isNotBlank(moduleInfo.description())) {
         rm.addCode("\n    .withDescription($S)", moduleInfo.description());
       }
       for (var objectInfo : moduleInfo.objects()) {
         rm.addCode("\n    .withObject(")
-            .addCode("\n        $T.dag().typeDef().withObject($S", Dagger.class, objectInfo.name());
+            .addCode(
+                "\n        $T.from($T.dag()).typeDef().withObject($S",
+                CORE,
+                Dagger.class,
+                objectInfo.name());
         if (isNotBlank(objectInfo.description())) {
           rm.addCode(
               ", new $T.WithObjectArguments().withDescription($S)",
@@ -422,7 +433,11 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
       }
       for (var enumInfo : moduleInfo.enumInfos().values()) {
         rm.addCode("\n    .withEnum(")
-            .addCode("\n        $T.dag().typeDef().withEnum($S", Dagger.class, enumInfo.name());
+            .addCode(
+                "\n        $T.from($T.dag()).typeDef().withEnum($S",
+                CORE,
+                Dagger.class,
+                enumInfo.name());
         if (isNotBlank(enumInfo.description())) {
           rm.addCode(
               ", new $T.WithEnumArguments().withDescription($S)",
@@ -521,7 +536,8 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                               .beginControlFlow(
                                   "try ($T telemetry = new $T())", Telemetry.class, Telemetry.class)
                               .addStatement(
-                                  "new Entrypoint().dispatch($T.dag().currentFunctionCall())",
+                                  "new Entrypoint().dispatch($T.from($T.dag()).currentFunctionCall())",
+                                  CORE,
                                   Dagger.class)
                               .nextControlFlow("finally")
                               .addStatement("$T.dag().close()", Dagger.class)
@@ -563,17 +579,19 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                               .addStatement("return null")
                               .nextControlFlow("catch ($T e)", InvocationTargetException.class)
                               .addStatement(
-                                  "fnCall.returnError($T.dag().error(e.getTargetException().getMessage()))",
+                                  "fnCall.returnError($T.from($T.dag()).error(e.getTargetException().getMessage()))",
+                                  CORE,
                                   Dagger.class)
                               .addStatement("throw e")
                               .nextControlFlow("catch ($T e)", DaggerExecException.class)
                               .addStatement(
-                                  "fnCall.returnError($T.dag().error(e.getMessage())"
+                                  "fnCall.returnError($T.from($T.dag()).error(e.getMessage())"
                                       + ".withValue(\"stdout\", $T.toJSON(e.getStdOut()))"
                                       + ".withValue(\"stderr\", $T.toJSON(e.getStdErr()))"
                                       + ".withValue(\"cmd\", $T.toJSON(e.getCmd()))"
                                       + ".withValue(\"exitCode\", $T.toJSON(e.getExitCode()))"
                                       + ".withValue(\"path\", $T.toJSON(e.getPath())))",
+                                  CORE,
                                   Dagger.class,
                                   JsonConverter.class,
                                   JsonConverter.class,
@@ -583,7 +601,8 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                               .addStatement("throw e")
                               .nextControlFlow("catch ($T e)", Exception.class)
                               .addStatement(
-                                  "fnCall.returnError($T.dag().error(e.getMessage()))",
+                                  "fnCall.returnError($T.from($T.dag()).error(e.getMessage()))",
+                                  CORE,
                                   Dagger.class)
                               .addStatement("throw e")
                               .endControlFlow()
@@ -707,7 +726,8 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
     CodeBlock.Builder code =
         CodeBlock.builder()
             .add(
-                "\n                $T.dag().function($S,",
+                "\n                $T.from($T.dag()).function($S,",
+                CORE,
                 Dagger.class,
                 isConstructor ? "" : fnInfo.name())
             .add("\n                    ")

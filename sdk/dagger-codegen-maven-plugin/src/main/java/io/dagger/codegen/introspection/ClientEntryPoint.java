@@ -6,7 +6,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * What a module client exposes beyond its types: the static {@code from(Client)} factory on its
+ * What a module client exposes beyond its types: the static {@code from(Session)} factory on its
  * root type, the static-import alias named after the module, and one static shim per field the
  * module adds to a core type other than {@code Query}.
  *
@@ -16,25 +16,45 @@ import java.util.stream.Collectors;
  */
 public record ClientEntryPoint(SchemaPartition client, ClientBinding binding) {
 
+  /** The core entry point: {@code core(session)}, over the core partition, serving nothing. */
+  public static ClientEntryPoint core(SchemaPartition core) {
+    if (core.module() != null) {
+      throw new IllegalArgumentException("core entry point needs the core partition");
+    }
+    return new ClientEntryPoint(core, null);
+  }
+
   public ClientEntryPoint {
-    if (client.module() == null) {
-      throw new IllegalArgumentException("an entry point needs a client partition, not core");
+    if (binding == null) {
+      // core enters on the Query root itself, so it has no module, no binding and no owned field
+      if (client.module() != null) {
+        throw new IllegalArgumentException("core entry point needs the core partition");
+      }
+    } else {
+      if (client.module() == null) {
+        throw new IllegalArgumentException("an entry point needs a client partition, not core");
+      }
+      if (!client.module().equals(binding.module())) {
+        throw new IllegalArgumentException(
+            String.format(
+                "binding is for module %s but the partition is for %s",
+                binding.module(), client.module()));
+      }
+      String root = entryField(client).getTypeRef().getTypeName();
+      if (client.types().stream().noneMatch(type -> root.equals(type.getName()))) {
+        throw new IllegalArgumentException(
+            String.format(
+                "module %s enters on the core type %s, which it does not own, so there is no client"
+                    + " to generate: a module named after a core type collides with it. Rename the"
+                    + " module, or alias the dependency.",
+                client.module(), root));
+      }
     }
-    if (!client.module().equals(binding.module())) {
-      throw new IllegalArgumentException(
-          String.format(
-              "binding is for module %s but the partition is for %s",
-              binding.module(), client.module()));
-    }
-    String root = entryField(client).getTypeRef().getTypeName();
-    if (client.types().stream().noneMatch(type -> root.equals(type.getName()))) {
-      throw new IllegalArgumentException(
-          String.format(
-              "module %s enters on the core type %s, which it does not own, so there is no client"
-                  + " to generate: a module named after a core type collides with it. Rename the"
-                  + " module, or alias the dependency.",
-              client.module(), root));
-    }
+  }
+
+  /** Whether this is the core entry point (no bound module to serve). */
+  public boolean isCore() {
+    return binding == null;
   }
 
   /** The module's constructor: the {@code Query} field it owns. */
@@ -42,9 +62,9 @@ public record ClientEntryPoint(SchemaPartition client, ClientBinding binding) {
     return entryField(client);
   }
 
-  /** The GraphQL name of the module's root object type. */
+  /** The GraphQL name of the root type this entry point sits on ({@code Query} for core). */
   public String rootTypeName() {
-    return entryField().getTypeRef().getTypeName();
+    return isCore() ? "Query" : entryField().getTypeRef().getTypeName();
   }
 
   private static Field entryField(SchemaPartition client) {

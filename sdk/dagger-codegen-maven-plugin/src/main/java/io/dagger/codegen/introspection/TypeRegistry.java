@@ -50,8 +50,8 @@ public final class TypeRegistry {
   }
 
   /**
-   * The Java class generated for a GraphQL type. {@code Query} is {@code Client}; the builtin
-   * scalars are their {@code java.lang} counterparts; a module-owned type is in its client package;
+   * The Java class generated for a GraphQL type. {@code Query} is {@code Core}; the builtin scalars
+   * are their {@code java.lang} counterparts; a module-owned type is in its client package;
    * everything else is core.
    */
   public ClassName forType(String graphqlName) {
