@@ -20,9 +20,9 @@ import java.lang.annotation.Target;
  *   @Function
  *   @Generate
  *   public Changeset generateCode() {
- *     return dag().directory()
+ *     return core(dag()).directory()
  *         .withNewFile("generated.txt", "content")
- *         .changes(dag().directory());
+ *         .changes(core(dag()).directory());
  *   }
  * }
  * }</pre>

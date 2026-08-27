@@ -149,16 +149,18 @@ Here is a code snippet using the Dagger client
 ```java
 package io.dagger.sample;
 
-import io.dagger.core.Client;
 import io.dagger.sdk.Dagger;
+import io.dagger.sdk.Session;
 
 import java.util.List;
+
+import static io.dagger.core.Core.core;
 
 public class GetDaggerWebsite {
 
   public static void main(String... args) throws Exception {
-    try (Client client = Dagger.connect()) {
-      String output = client
+    try (Session session = Dagger.connect()) {
+      String output = core(session)
           .container()
           .from("alpine")
           .withExec(List.of("apk", "add", "curl"))
@@ -195,7 +197,7 @@ A module function can return a nullable object the same way, by declaring
 ```java
 @Function
 public Optional<Directory> maybeDirectory(boolean found) {
-  return found ? Optional.of(dag().directory()) : Optional.empty();
+  return found ? Optional.of(core(dag()).directory()) : Optional.empty();
 }
 ```
 

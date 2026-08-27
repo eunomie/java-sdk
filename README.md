@@ -52,21 +52,28 @@ the generated, committed sources:
 
 A dependency declared in `dagger-module.toml` becomes a **generated client**:
 a package `io.dagger.client.<dependency>` holding that module's types and an
-entry point on its root type. The module's own API gets the same treatment, so a
-self call goes through the engine like any other:
+entry point on its root type. Core itself is reached the same way — `dag()` is
+the shared session, and every typed API hangs off it: `core(dag())` for the core
+API, `<dependency>(dag())` for a dependency, the module's own client for a self
+call:
 
 ```java
-import static io.dagger.sdk.Dagger.dag;
+import static io.dagger.core.Core.core;             // the core API
+import static io.dagger.sdk.Dagger.dag;             // the session
 import static io.dagger.client.hello.Hello.hello;   // a dependency named hello
 import static io.dagger.client.app.App.app;         // this module, named app
 
-hello(dag()).greet("world");        // the dependency
-app(dag()).build(source);           // ourselves, through the engine
+core(dag()).container().from("alpine")   // core — was dag().container()
+hello(dag()).greet("world");             // the dependency
+app(dag()).build(source);                // ourselves, through the engine
 ```
 
-`Hello.from(dag())` is the same entry point without the static import. An entry
-point serves its module into the session before its first call on a given
-client: inside a module the engine has already served it and the serve only
+`Hello.from(dag())` is the same entry point without the static import, and
+`Core.from(dag())` is the same for core. `dag()` returns a shared
+`io.dagger.sdk.Session` — the connection and nothing else — so every client in a
+process runs on one session. An entry point serves its module into the session
+before its first call on a given client (core serves nothing, it is always
+present): inside a module the engine has already served it and the serve only
 confirms it, in a standalone client it is the bootstrap. Later calls on the same
 client skip it. Core types (`io.dagger.core.Container`, `Directory`, ...) are shared by
 every client in the tree; a type authored by one module does not cross into
@@ -96,7 +103,8 @@ client starts one with the `dagger` CLI on the `PATH` (or in
 `_EXPERIMENTAL_DAGGER_CLI_BIN`):
 
 ```java
-try (var dag = Dagger.connect()) {
+try (var dag = Dagger.connect()) {     // dag is an AutoCloseable Session
+  core(dag).container().from("alpine");
   hello(dag).greet("world");
 }
 ```
@@ -107,13 +115,23 @@ Generated types moved: the runtime from `io.dagger.client` to `io.dagger.sdk`,
 the core API to `io.dagger.core`. In a module's own sources:
 
 ```sh
-sed -i -E 's/io\.dagger\.client\.(Dagger|AutoCloseableClient|Arguments|IDAbleSerializer|IDAble|InputValue|QueryBuilder|ScalarStringDeserializer|ScalarSerializer|Scalar|FieldsStrategy|ModuleBinding|exception|engineconn|graphql|telemetry)/io.dagger.sdk.\1/g; s/io\.dagger\.client\.([A-Z])/io.dagger.core.\1/g' $(git ls-files 'src/main/java/*.java' 'src/main/java/**/*.java')
+sed -i -E 's/io\.dagger\.(client|sdk)\.AutoCloseableClient/io.dagger.sdk.Session/g; s/io\.dagger\.(client|core)\.Client\b/io.dagger.core.Core/g; s/io\.dagger\.client\.(Dagger|Arguments|IDAbleSerializer|IDAble|InputValue|QueryBuilder|ScalarStringDeserializer|ScalarSerializer|Scalar|FieldsStrategy|ModuleBinding|exception|engineconn|graphql|telemetry)/io.dagger.sdk.\1/g; s/io\.dagger\.client\.([A-Z])/io.dagger.core.\1/g' $(git ls-files 'src/main/java/*.java' 'src/main/java/**/*.java')
 dagger generate
 ```
 
-The first rule lists the runtime classes a module writes against by name,
-because the second one cannot tell them from a core type. `**` does not match
-files directly under `src/main/java`, hence the two patterns.
+Then reach core through the session: `dag().<field>()` becomes
+`core(dag()).<field>()` (add `import static io.dagger.core.Core.core;`), and a
+`Dagger.connect()` result is now a `Session`.
+
+The sed only rewrites import lines, so fix the source too: a variable declared
+`Client` or `AutoCloseableClient` becomes a `Session`, and its core calls have
+to be wrapped in `core(...)`.
+
+The first two rules rename the classes this split replaced: `AutoCloseableClient`
+folded into `Session`, and the `Client` query root became `Core`. The third rule
+lists the remaining runtime classes a module writes against by name, because the
+last one cannot tell them from a core type. `**` does not match files directly
+under `src/main/java`, hence the two patterns.
 
 Because everything is committed and the pom defaults `dagger.proc=none`, the
 module builds with a plain `mvn package` (no annotation processor at build time)
