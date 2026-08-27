@@ -1102,3 +1102,122 @@ checks, `packager:unit-tests`, `packager:generate`, and the new e2e checks.
   runtime through the engine — that needs committed generated fixtures or a
   git-bound module. The module build and bootstrap, the compile-time API, the
   identical-bytes property and the serve preamble's requests are covered.
+
+---
+
+# Iteration: split the session from the core client
+
+Status: implemented
+Date: 2026-08-27
+
+## Problem
+
+`io.dagger.core.Client` does two unrelated jobs. It is **the session** — it
+holds the `Connection`, is the `Dagger.dag()` singleton, and is what `close()`
+tears down — and it is **the core Query root**, the generated type carrying
+`container()`, `directory()`, and the rest of core. So `dag()` returns the
+Query root, and core is reached as `dag().container()` while a dependency is
+reached as `clientA(dag())` — two different shapes for the same idea (a typed
+API over the session).
+
+This iteration splits the two, so that **core is reached exactly like any other
+client** and `dag()` is nothing but the shared session:
+
+```java
+core(dag()).container().from("alpine")   // core — was dag().container()
+clientA(dag()).base("alpine")            // a dependency client — unchanged
+```
+
+## Decisions
+
+**S1 — `io.dagger.sdk.Session` is the session (new, hand-written).** It owns
+what made `Client` a session and nothing schema-derived: the `Connection`, a
+`queryBuilder()` that returns a fresh root `QueryBuilder` on the connection,
+`nodeQueryBuilder(typeName, id)` for loading an object by ID, and `close()`.
+It `implements AutoCloseable`, which folds `AutoCloseableClient` away: the
+`connect()` result is a `Session` you close in try-with-resources, and the
+`dag()` global is a `Session` the process shares and does not close.
+
+**S2 — the core Query root becomes generated `io.dagger.core.Core`, reached via
+`core(Session)`.** It is emitted by the same entry-point machinery as a module
+client: a `Core.from(Session)` factory plus a `core(Session)` static-import
+alias. It is *almost* just another client — three differences, all falling out
+of "core is the base, not a served module":
+
+- **No serve preamble.** Core is always present in the session, so `from` just
+  wraps `session.queryBuilder()`; there is no `ModuleBinding.ensureServed`.
+- **Its root type is the Query root itself**, which is unowned (no
+  `@sourceMap`). So the entry-point emission special-cases core: the generator
+  assumes the Dagger schema's query root is named `Query` — the engine always
+  names it that — and maps that fixed name to `Core`; there is no binding to
+  bake. An arbitrarily named root is out of scope.
+- **It stays the shared base.** Every other client's core-typed references still
+  resolve to `io.dagger.core`; only the Query-root type is renamed `Client` →
+  `Core`, and its connection-opening constructor moves to `Session`.
+
+**S3 — `Dagger.dag()` returns the `Session` singleton.** Synchronized, as now.
+`connect(...)` returns a `Session`.
+
+**S4 — every generated client takes a `Session`.** `from(Client)` becomes
+`from(Session)`, and the body chains from `session.queryBuilder()` (already a
+root builder, so the previous `.root()` hop disappears). Module clients still
+serve their module; core does not.
+
+**S5 — generated `Deserializer`s resolve through the session.** They already
+call `Dagger.dag().nodeQueryBuilder(...)`; `dag()` now returns a `Session` that
+carries `nodeQueryBuilder`, so the call is unchanged in shape and correct again.
+
+**S6 — module authoring migrates `dag().X()` → `core(dag()).X()`.** This is the
+one place the prior design's "no change to module authoring" no longer holds,
+by intent: core is now reached through `core(dag())`. Templates, samples, and
+the README migration recipe move accordingly.
+
+## Alternatives considered
+
+**Keep the Query root named `Client` and add a `core(dag())` accessor.**
+Rejected: with a `Session` in play, a schema-root type also called `Client`
+reads as the session. Renaming it `Core` makes `core(dag())` name its own
+return type, exactly as `clientA(dag())` returns `ClientA`.
+
+**A hand-written thin `core()` accessor instead of a generated client.**
+Rejected: it would make core the one API reached differently from every other
+client. Generating `Core` the same way as `ClientA` (minus the serve) is the
+consistency the whole feature is about.
+
+**`core` in a package like `io.dagger.client.core`.** Rejected: core is the
+shared base every other client depends on, and is not a served module. It stays
+in `io.dagger.core`; only the reaching shape changes.
+
+## Affected components
+
+| Component | Change |
+|---|---|
+| `sdk/dagger-java-sdk` | new `io.dagger.sdk.Session` (the connection/`queryBuilder`/`nodeQueryBuilder`/`close` role from `Client`); `Dagger.dag()`/`connect()` return `Session`; `AutoCloseableClient` folded into `Session implements AutoCloseable` |
+| `sdk/dagger-codegen-maven-plugin` | core mode emits `Core` with a `core(Session)`/`Core.from(Session)` entry point and no serve; the Query root formats to `Core`, and its `Connection` constructor is dropped; every client's `from` parameter becomes `Session`; the body chains from `session.queryBuilder()` |
+| `templates/{default,empty,legacy}` | `dag().X()` → `core(dag()).X()` |
+| `sdk/dagger-java-samples` | same authoring migration |
+| `.dagger/modules/e2e` | rewire the clients fixtures: the `dep` module authors against `core(dag())`, `app` reaches it through `dep(dag())`, and the standalone client opens a `Session` |
+| `README.md` | the layout note and the migration recipe |
+
+## Testing
+
+Unit:
+
+- `GeneratorTest` asserts the generated `Core.java` carries `from(Session)`, the
+  `core(Session)` alias and a body of `new Core(session.queryBuilder())`, and
+  contains no `ModuleBinding`, no `ensureServed` and no `Connection`;
+- `ModuleClientCodegenTest` asserts a module client's `from(Session)` chains from
+  `dag.queryBuilder()` and serves its module with `ModuleBinding.ensureServed`;
+- `DaggerTypeTest` asserts the processor emits core calls as
+  `io.dagger.core.Core.from(io.dagger.sdk.Dagger.dag())`.
+
+e2e, as `@check` in `.dagger/modules/e2e`:
+
+- the two-clients fixture, with the `dep` module authored against `core(dag())`
+  and `app` reaching it through `dep(dag())`, generates, builds, and runs;
+- a standalone client opens a `Session` with `Dagger.connect()` and reaches the
+  module through `dep(session)`.
+
+## Progress
+
+- **Implemented.** Reviewed; fixes folded.
