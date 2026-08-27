@@ -307,6 +307,7 @@ type E2e {
   let nullableReturnSource: String! {
     "package io.dagger.modules.generateapp;\n"
       + "\n"
+      + "import static io.dagger.core.Core.core;\n"
       + "import static io.dagger.sdk.Dagger.dag;\n"
       + "\n"
       + "import io.dagger.core.Directory;\n"
@@ -321,7 +322,7 @@ type E2e {
       + "    if (!found) {\n"
       + "      return Optional.empty();\n"
       + "    }\n"
-      + "    return Optional.of(dag().directory().withNewFile(\"found\", \"\"));\n"
+      + "    return Optional.of(core(dag()).directory().withNewFile(\"found\", \"\"));\n"
       + "  }\n"
       + "}\n"
   }
@@ -392,8 +393,8 @@ type E2e {
     )
 
     let dep = first.layer.file(generatedRoot + "/client/dep/Dep.java").contents
-    assertContains(dep, "public static Dep from(Client dag)", "the dependency client should expose from(Client)")
-    assertContains(dep, "public static Dep dep(Client dag)", "the dependency client should expose the static-import alias")
+    assertContains(dep, "public static Dep from(Session dag)", "the dependency client should expose from(Session)")
+    assertContains(dep, "public static Dep dep(Session dag)", "the dependency client should expose the static-import alias")
     assertContains(
       dep,
       "ModuleBinding.ensureServed(root, \"dep\", \"LOCAL_SOURCE\", \"/" + depModulePath + "\", \"\")",
@@ -405,7 +406,7 @@ type E2e {
     # module's final name, so the aliased client chains and serves that name and
     # both clients live on one session.
     let greeter = first.layer.file(generatedRoot + "/client/greeter/Greeter.java").contents
-    assertContains(greeter, "public static Greeter greeter(Client dag)", "the aliased dependency should be named after the alias")
+    assertContains(greeter, "public static Greeter greeter(Session dag)", "the aliased dependency should be named after the alias")
     assertContains(
       greeter,
       "ModuleBinding.ensureServed(root, \"greeter\", \"LOCAL_SOURCE\", \"/" + depModulePath + "\", \"\")",
@@ -413,7 +414,7 @@ type E2e {
     )
 
     let selfClient = first.layer.file(generatedRoot + "/client/app/App.java").contents
-    assertContains(selfClient, "public static App app(Client dag)", "the module should get a client for itself")
+    assertContains(selfClient, "public static App app(Session dag)", "the module should get a client for itself")
     assertContains(selfClient, "greetViaDep(", "the self client should expose the module's functions")
 
     # With the self client vendored, the module can call itself; the previous
@@ -533,7 +534,7 @@ type E2e {
     let withSeed = registered.withDirectory(clientsRoot, seeded.layer)
     let all = javaSdk.generateAllClient(withSeed.asWorkspace(cwd: clientsRoot))
     assertAdded(all, "dep-client/sdk/src/generated/java/io/dagger/client/dep/Dep.java")
-    assertAdded(all, "dep-client/sdk/src/generated/java/io/dagger/core/Client.java")
+    assertAdded(all, "dep-client/sdk/src/generated/java/io/dagger/core/Core.java")
 
     let again = javaSdk.generateAllClient(
       withSeed.withDirectory(clientsRoot, all.layer).asWorkspace(cwd: clientsRoot),

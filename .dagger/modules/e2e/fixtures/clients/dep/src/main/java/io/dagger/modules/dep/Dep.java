@@ -1,5 +1,6 @@
 package io.dagger.modules.dep;
 
+import static io.dagger.core.Core.core;
 import static io.dagger.sdk.Dagger.dag;
 
 import io.dagger.core.Directory;
@@ -16,6 +17,6 @@ public class Dep {
   /** A core type handed across the client boundary. */
   @Function
   public Directory scratch() {
-    return dag().directory().withNewFile("dep.txt", "from dep");
+    return core(dag()).directory().withNewFile("dep.txt", "from dep");
   }
 }
