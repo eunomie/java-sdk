@@ -1,10 +1,14 @@
 """
 A Dagger module that uses the Java SDK.
+
+Operates on one scope: `rootPath` is Workspace.cwd, the persisted scope the
+engine hands each SDK call. The engine generates any local dependencies first
+and threads the resulting workspace in, so dependency client-facing schemas are
+readable here without this module staging them.
 """
 type Mod {
   """
-  Workspace-root-relative path of this module root — the module's stable
-  identity, independent of where the client is invoked from.
+  Workspace-root-relative path of this module root (Workspace.cwd).
   """
   rootPath: String!
 
@@ -14,11 +18,6 @@ type Mod {
   let ws: Workspace!
 
   """
-  Marker filename that skips generate when found at or above this module root.
-  """
-  let skipGenerateFilename: String!
-
-  """
   Whether to commit the compiled SDK jar into the module (see JavaSdk.vendorSdkJar).
   """
   let vendorSdkJar: Boolean!
@@ -26,51 +25,12 @@ type Mod {
   let codegen: Codegen! { Codegen() }
 
   """
-  This module root relative to the client's current location: "." when the cwd is
-  the module itself, "sub/mod" for a module beneath it, ".." for an enclosing one.
-  A cwd-relative view of rootPath, so listings read the way a shell user would.
+  This module's generated overlay applied onto the workspace at its scope, and
+  returned for the engine to diff. Local dependencies are already generated in
+  `ws` (the engine owns their ordering), so their schemas read directly.
   """
-  path: String! {
-    let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
-    if (rootPath == cwd) {
-      "."
-    } else if (cwd == "") {
-      rootPath
-    } else if (rootPath.trimPrefix(cwd + "/") != rootPath) {
-      rootPath.trimPrefix(cwd + "/")
-    } else if (rootPath == "." or cwd.trimPrefix(rootPath + "/") != cwd) {
-      let rootDepth = if (rootPath == ".") { 0 } else { rootPath.split("/").length }
-      cwd.split("/").dropFirst(rootDepth).map { segment => ".." }.join("/")
-    } else {
-      rootPath
-    }
-  }
-
-  """
-  Whether this module or an ancestor contains the configured generate skip marker.
-  """
-  skipGenerate(ws: Workspace!): Boolean! {
-    hasMarker(ws, skipGenerateFilename)
-  }
-
-  """
-  Whether this module root or an ancestor containes a marker filename.
-  """
-  let hasMarker(ws: Workspace!, filename: String!): Boolean! {
-    let markerPath = ws.findUp(name: filename, from: rootPath)
-    markerPath != null
-  }
-
-  """
-  Generate this module.
-  If the generate skip marker is present, the changeset is empty.
-  """
-  generate(ws: Workspace!): Changeset! {
-    if (skipGenerate(ws)) {
-      changeset
-    } else {
-      generateModule(ws)
-    }
+  generatedWorkspace(ws: Workspace!): Workspace! {
+    withOverlay(ws, rootPath, generatedOverlay(ws))
   }
 
   """
@@ -87,50 +47,6 @@ type Mod {
       .withEnvVariable("_DAGGER_JAVA_SDK_MODULE_NAME", name)
       .withExec(["mvn", "compile", "-Ddagger.proc=full", "-Ddagger.sdk=prebuilt", "-Ddagger.sdk.version=" + name, "--no-transfer-progress"])
       .directory("/module/target/generated-sources/annotations")
-  }
-
-  """
-  The workspace with every local dependency this SDK manages generated and
-  staged, recursively, so their client-facing schemas can be read.
-
-  Done here rather than through the engine's generateLocalDependencies: that
-  routes through the workspace's generator rollup, which the engine leaves
-  empty for a value workspace — where every in-memory check runs — and which
-  does not carry this SDK's own generators in this repository. Ownership is the
-  engine's rule: a dependency is ours when it sits in the modules registered to
-  this SDK; a dependency of another SDK, or a remote one, is assumed committed.
-  """
-  withLocalDependenciesGenerated(ws: Workspace!): Workspace! {
-    # The registry, not modules(ws): that list is scoped to the caller's cwd,
-    # and a dependency is usually a sibling, outside it. A workspace that
-    # registers this SDK under another key has no such record, and the engine
-    # errors rather than returning nothing, which would fail every generate;
-    # an empty registry means "every dependency is assumed committed".
-    let managed = ws.sdk(name: currentModule.name).modules.{{source}}.map { m => normalizePath(m.source) } rescue []
-    ws.moduleSource(workspaceRef(rootPath))
-      .dependencies
-      .{{kind, sourceRootSubpath}}
-      # A dependency inside the workspace is LOCAL_SOURCE on the host and
-      # DIR_SOURCE in a workspace built from a directory value; both live at
-      # sourceRootSubpath. Only a git dependency is somewhere else.
-      .filter { dep => JSON.encode(dep.kind).contains("GIT") == false }
-      .filter { dep => managed.contains(normalizePath(dep.sourceRootSubpath)) }
-      .reduce(ws) { staged, dep =>
-        # Overlaid as directories, not applied as a changeset: a changeset is
-        # measured from the caller's cwd and may not reach a sibling.
-        let mod = Mod(
-          rootPath: dep.sourceRootSubpath,
-          ws: staged,
-          skipGenerateFilename: skipGenerateFilename,
-          vendorSdkJar: vendorSdkJar,
-        )
-        if (mod.skipGenerate(staged)) {
-          staged
-        } else {
-          let depStaged = mod.withLocalDependenciesGenerated(staged)
-          withOverlay(depStaged, dep.sourceRootSubpath, mod.generatedOverlay(depStaged))
-        }
-      }
   }
 
   """
@@ -186,30 +102,14 @@ type Mod {
   }
 
   """
-  Stage the vendored SDK + generated entrypoint for one module.
-
-  The returned changeset is relative to the client's cwd, the form the engine
-  applies a generator's result in: past v1.0.0-beta.10 every Workspace.changes
-  result is measured from the workspace cwd, so staging onto the workspace value
-  and diffing it against the baseline the caller already holds is all this needs.
-  """
-  let generateModule(ws: Workspace!): Changeset! {
-    let wsWithDeps = withLocalDependenciesGenerated(ws)
-    # Baseline on the staged-dependency workspace, not the one handed in: the
-    # dependencies' generated code belongs to their own SDKs, not this changeset.
-    withOverlay(wsWithDeps, rootPath, generatedOverlay(wsWithDeps)).changes(wsWithDeps)
-  }
-
-  """
   Everything generation writes for this module, rooted at the module: sdk/ —
   the vendored runtime and processor, io.dagger.core, one io.dagger.client
   package per dependency and the module's own, plus the committed jar when
   enabled — and src/generated/java, the entrypoint.
 
   `ws` is expected to carry this module's local dependencies generated already
-  (withLocalDependenciesGenerated): a module cannot read a local dependency's
-  schema before that dependency has been generated, and staging the closure
-  here as well would walk the whole dependency graph twice per generate.
+  (the engine generates them first and threads the workspace in): a module
+  cannot read a local dependency's schema before that dependency is generated.
   """
   generatedOverlay(ws: Workspace!): Directory! {
     let modSource = ws.moduleSource(workspaceRef(rootPath))
@@ -305,35 +205,5 @@ type Mod {
   """
   let joinPath(modPathArg: String!, sub: String!): String! {
     if (modPathArg == ".") { sub } else { modPathArg + "/" + sub }
-  }
-
-  """
-  Return the default new module path for `init`.
-  """
-  let defaultModulePath(ws: Workspace!, name: String!): String! {
-    let daggerDir = ws.findUp(".dagger", ".")
-    if (daggerDir == null) {
-      ".dagger/modules/" + name
-    } else {
-      daggerDir.trimPrefix("/") + "/modules/" + name
-    }
-  }
-
-  """
-  Return a valid module path relative to the workspace.
-  """
-  let cleanModulePath(path: String!): String! {
-    let rawPath = path.trimPrefix("./").trimPrefix("/")
-
-    if (rawPath == "" or rawPath == ".") {
-      "."
-    } else if (rawPath == ".."
-      or rawPath.trimPrefix("../") != rawPath
-      or rawPath.contains("/../")
-      or rawPath.trimSuffix("/..") != rawPath) {
-      raise "path escapes workspace: " + rawPath
-    } else {
-      rawPath.trimSuffix("/")
-    }
   }
 }

@@ -1,60 +1,128 @@
 """
-Manage Dagger modules that use the Java SDK (new self-contained code organisation).
+Java SDK provider for the module-max UX (dagger/dagger#13992).
 
-Modules created by `init` use the self-contained layout: the Java SDK is vendored
-as source and code is generated into the module (see `generate`), and the module
-runtime is this repository's build/package-only runtime
-(`github.com/dagger/java-sdk/runtime`). Because the generated files are committed,
-the runtime skips codegen at module load and just builds and packages the
-committed sources.
+The engine detects this SDK by the complete set of `clientScope`,
+`generateModule` and `generateClient` functions. The engine owns the workspace
+config, target resolution, the local generation graph and order, and the atomic
+workspace changeset; each SDK call receives a Workspace whose cwd is the
+persisted scope and returns the modified Workspace. This module only detects the
+scope and writes files inside it.
+
+Modules use the self-contained layout: the Java SDK is vendored as source and
+code is generated into the module (see `generateModule`), and the runtime is
+this repository's build/package-only runtime
+(`github.com/dagger/java-sdk/runtime`). Because the generated files are
+committed, the runtime skips codegen at module load and just builds and packages
+the committed sources.
 """
 type JavaSdk {
   """
   Runtime source written into the dagger-module.toml of new Java modules.
   """
-  targetRuntime: String! { "github.com/dagger/java-sdk/runtime" }
+  runtimeSource: String! = "github.com/dagger/java-sdk/runtime"
 
   """
-  Marker filename that skips generate when found at or above a Java SDK module root.
+  Template a new module is initialized from: default*, empty, legacy.
+  Surfaced by the engine as `--java-template`.
   """
-  skipGenerateFilename: String! = ".dagger-java-sdk-skip-generate"
+  template: String! = "default"
 
   """
   Commit the compiled Dagger Java SDK as a jar into each generated module so its
   runtime build compiles only the module's own code against the jar instead of
   recompiling the vendored SDK sources. The sources stay checked in for IDE use.
-  Opt-in (set `settings.vendorSdkJar = true` under `[modules.java-sdk]` in the
-  workspace dagger.toml) because it adds a committed binary artifact.
+  Opt-in because it adds a committed binary artifact. Surfaced by the engine as
+  `--java-vendor-sdk-jar`.
   """
   vendorSdkJar: Boolean! = false
 
   """
-  Initialize Java-owned files for a new Dagger module.
+  Detect the Java client-generation scope for Workspace.cwd: the nearest Maven
+  project (a directory holding pom.xml) at or above cwd. Returns "." for the
+  workspace root and "" when there is no enclosing Maven project.
   """
-  initModule(
-    ws: Workspace!,
-    name: String!,
-    path: String!,
-    """
-    Template to use to init the module: default*, empty, legacy
-    """
-    template: String! = "default",
-  ): Changeset! {
-    let rawPath = path.trimPrefix("./").trimPrefix("/")
-    let modPath = if (rawPath == "" or rawPath == ".") {
-      "."
-    } else if (rawPath == ".." or rawPath.trimPrefix("../") != rawPath) {
-      raise "path escapes workspace: " + rawPath
+  clientScope(ws: Workspace!): String! {
+    let pom = ws.findUp("pom.xml")
+    if (pom == null) {
+      ""
     } else {
-      rawPath.trimSuffix("/")
+      configDir(pom, "pom.xml")
     }
+  }
 
-    let selectedTemplate = if (template == "") { "default" } else { template }
-    # `path` is workspace-root-relative, so anchor it: relative workspace paths
-    # resolve from ws.cwd and would be prefixed again when initModule is called
-    # directly from a subdirectory instead of being driven by the engine.
-    let target = if (modPath == ".") { "/" } else { "/" + modPath }
-    ws.withNewDirectory(target, renderedTemplate(name, selectedTemplate)).changes(ws)
+  """
+  Initialize or regenerate the Java module in Workspace.cwd.
+
+  The engine sets Workspace.cwd to the persisted scope, does not create
+  dagger-module.toml, and diffs the returned workspace. The presence of
+  dagger-module.toml selects behaviour: absent, scaffold the template and write
+  the config; present, regenerate over the committed state. The result always
+  carries a valid dagger-module.toml in the scope.
+  """
+  generateModule(ws: Workspace!): Workspace! {
+    let rootPath = normalizePath(ws.cwd)
+    let name = basename(rootPath)
+    let scaffolded = if (exists(ws, joinPath(rootPath, "dagger-module.toml"))) {
+      ws
+    } else {
+      ws
+        .withNewDirectory(workspaceRef(rootPath), renderedTemplate(name, selectedTemplate))
+        .withNewFile(workspaceRef(joinPath(rootPath, "dagger-module.toml")), moduleConfig(name))
+    }
+    Mod(rootPath: rootPath, ws: scaffolded, vendorSdkJar: vendorSdkJar)
+      .generatedWorkspace(scaffolded)
+  }
+
+  """
+  Generate a typed Java client for `target` in Workspace.cwd (the persisted
+  scope). `target` is the engine-resolved module source, so no reference
+  parsing happens here. Returns the workspace with the client written.
+  """
+  generateClient(
+    ws: Workspace!,
+    target: ModuleSource!,
+    name: String = "",
+  ): Workspace! {
+    let rootPath = normalizePath(ws.cwd)
+    # name is nullable (String, not String!); coerce before it feeds a String! param.
+    let requested = name ?? ""
+    let clientName = if (requested == "") { basename(rootPath) } else { requested }
+    Client(
+      rootPath: rootPath,
+      module: target.moduleName,
+      kindJSON: JSON.encode(target.kind),
+      canonicalRef: target.asString,
+      rootSubpath: target.sourceRootSubpath,
+      pin: target.pin,
+      engineVersion: target.engineVersion,
+      schemaJSON: target.clientSchemaIntrospectionJSON.contents,
+    ).generatedWorkspace(ws, clientPom(clientName))
+  }
+
+  """
+  The requested template, falling back to default for an empty value.
+  """
+  let selectedTemplate: String! {
+    if (template == "") { "default" } else { template }
+  }
+
+  """
+  The dagger-module.toml a new Java module starts from: the module name, the
+  engine version this SDK targets, a "." source, and this SDK's runtime.
+  """
+  let moduleConfig(name: String!): String! {
+    "name = \"" + name + "\"\n" +
+    "engineVersion = \"v1.0.0-beta.11\"\n" +
+    "source = \".\"\n\n" +
+    "[runtime]\n" +
+    "  source = \"" + runtimeSource + "\"\n"
+  }
+
+  """
+  Whether a workspace-root-relative path exists in the workspace.
+  """
+  let exists(ws: Workspace!, path: String!): Boolean! {
+    ws.directory("/", include: [path]).exists(path)
   }
 
   """
@@ -62,6 +130,13 @@ type JavaSdk {
   """
   let renderedTemplate(name: String!, template: String!): Directory! {
     renderedTemplateDir(name, "templates/" + template)
+  }
+
+  """
+  The pom of a client named `name`, from the client template.
+  """
+  let clientPom(name: String!): File! {
+    renderedTemplateDir(name, "client-template").file("pom.xml")
   }
 
   """
@@ -94,136 +169,40 @@ type JavaSdk {
   }
 
   """
-  Return every Java SDK module this workspace manages that is visible from the
-  client's current location.
-
-  The engine owns both the list and the cwd policy: currentModule.asSDK returns
-  the modules registered to this SDK that sit at or below the client's cwd, plus
-  the nearest enclosing one when the cwd is not itself a module. So running from
-  a subdirectory acts on the project you're in — and the projects beneath it —
-  not the whole workspace. Paths come back relative to the workspace root, the
-  currency Mod.rootPath uses.
+  A workspace path in the form the engine agrees on: no leading "./" or "/", no
+  trailing "/", "." for the root.
   """
-  modules(ws: Workspace!): [Mod!]! {
-    currentModule
-      .asSDK(workspace: ws)
-      .modules
-      .{{path}}
-      .map { module => Mod(
-        rootPath: module.path,
-        ws: ws,
-        skipGenerateFilename: skipGenerateFilename,
-        vendorSdkJar: vendorSdkJar,
-      ) }
+  let normalizePath(path: String!): String! {
+    let normalized = path.trimPrefix("./").trimPrefix("/").trimSuffix("/")
+    if (normalized == "") { "." } else { normalized }
   }
 
   """
-  Generate every managed Java SDK module visible from the client's current
-  location (runs at `dagger generate`). Discovery goes through modules(ws), so
-  running from a subdirectory generates only the project you're in and the
-  projects beneath it.
+  A module path as a workspace-root-absolute path ("/" for the root), the form
+  Workspace resolves from the workspace root rather than from cwd.
   """
-  generateAll(ws: Workspace!): Changeset! @generate {
-    changeset.withChangesets(
-      modules(ws)
-        .filter { mod => mod.skipGenerate(ws) == false }
-        .map { mod => mod.generate(ws) },
-    )
+  let workspaceRef(path: String!): String! {
+    if (path == ".") { "/" } else { "/" + path }
   }
 
   """
-  Generate a typed Java client for the module at `module`, written to `path`.
-  `module` is a workspace path (leading "/", "./" or a bare path) or a git ref.
+  Join a workspace path with a sub-path, handling the root (".") path.
   """
-  generateClient(ws: Workspace!, module: String!, path: String!): Changeset! {
-    let clientPath = cleanClientPath(path)
-    # A git ref opens on its host, so only a dot in the first segment makes one:
-    # `libs/my.mod` is a workspace path, `github.com/dagger/hello` is not.
-    let firstSegment = module.split("/")[0] ?? module
-    let local = module.hasPrefix("/")
-      or module.hasPrefix("./")
-      or module == "."
-      or (firstSegment.contains(".") == false)
-    let src = if (local) {
-      ws.moduleSource("/" + module.trimPrefix("./").trimPrefix("/"))
-    } else {
-      moduleSource(refString: module)
-    }
-    Client(
-      rootPath: clientPath,
-      module: src.moduleName,
-      kindJSON: JSON.encode(src.kind),
-      canonicalRef: src.asString,
-      rootSubpath: src.sourceRootSubpath,
-      pin: src.pin,
-      engineVersion: src.engineVersion,
-      schemaJSON: src.clientSchemaIntrospectionJSON.contents,
-    ).generate(ws, clientPom(clientPath))
+  let joinPath(path: String!, sub: String!): String! {
+    if (path == ".") { sub } else { path + "/" + sub }
   }
 
   """
-  Seed the SDK-owned files a new Java client needs at `path`: a pom that builds
-  the generated sources. The engine records the managed client in workspace
-  config and materializes the client itself through the `@generate` hook.
+  The last segment of a path — a new module's name, taken from its directory.
   """
-  initClient(
-    ws: Workspace!,
-    path: String!,
-    module: String!,
-    dev: Boolean! = false,
-  ): Changeset! {
-    let clientPath = cleanClientPath(path)
-    Client(rootPath: clientPath).init(ws, clientPom(clientPath))
+  let basename(path: String!): String! {
+    normalizePath(path).split("/").reduce("module") { _, part => part }
   }
 
   """
-  Regenerate every Java client registered on this SDK that is visible from the
-  client's current location (runs at `dagger generate`). As with modules, the
-  engine owns the list, the cwd policy, and the resolution of each bound module.
+  The normalized directory of a findUp match, dropping its marker filename.
   """
-  generateAllClient(ws: Workspace!): Changeset! @generate {
-    changeset.withChangesets(
-      currentModule
-        .asSDK(workspace: ws)
-        .clients
-        .{{path, moduleSource.{{moduleName, kind, asString, sourceRootSubpath, pin, engineVersion, clientSchemaIntrospectionJSON.{{contents}}}}}}
-        .map { client =>
-          Client(
-            rootPath: client.path,
-            module: client.moduleSource.moduleName,
-            kindJSON: JSON.encode(client.moduleSource.kind),
-            canonicalRef: client.moduleSource.asString,
-            rootSubpath: client.moduleSource.sourceRootSubpath,
-            pin: client.moduleSource.pin,
-            engineVersion: client.moduleSource.engineVersion,
-            schemaJSON: client.moduleSource.clientSchemaIntrospectionJSON.contents,
-          ).generate(ws, clientPom(client.path))
-        },
-    )
-  }
-
-  """
-  The pom of a client at `path`, named after its directory.
-  """
-  let clientPom(path: String!): File! {
-    let name = if (path == ".") { "client" } else { path.split("/").reduce("client") { acc, seg => seg } }
-    renderedTemplateDir(name, "client-template").file("pom.xml")
-  }
-
-  """
-  A client path as workspace-root-relative, "." for the root.
-  """
-  let cleanClientPath(path: String!): String! {
-    let rawPath = path.trimPrefix("./").trimPrefix("/")
-    if (rawPath == "" or rawPath == ".") {
-      "."
-    } else if (rawPath == ".."
-      or rawPath.trimPrefix("../") != rawPath
-      or rawPath.contains("/../")
-      or rawPath.trimSuffix("/..") != rawPath) {
-      raise "path escapes workspace: " + rawPath
-    } else {
-      rawPath.trimSuffix("/")
-    }
+  let configDir(foundPath: String!, marker: String!): String! {
+    normalizePath(foundPath.trimPrefix("/").trimSuffix(marker))
   }
 }

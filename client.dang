@@ -8,7 +8,8 @@ builds with a plain `mvn package`.
 """
 type Client {
   """
-  Workspace-root-relative directory the client is written to.
+  Workspace-root-relative directory the client is written to (Workspace.cwd, the
+  persisted scope).
   """
   pub rootPath: String!
 
@@ -41,12 +42,13 @@ type Client {
   let codegen: Codegen! { Codegen() }
 
   """
-  Generate the client under rootPath: the SDK runtime and the generated packages
-  under sdk/, and the given pom when the directory has none. Both core and the
-  client come from the bound module's client-facing schema, which hides nothing:
-  a client is allowed everything the CLI is.
+  Generate the client at rootPath and return the workspace for the engine to
+  diff: the SDK runtime and the generated packages under sdk/, and the given pom
+  when the directory has none. Both core and the client come from the bound
+  module's client-facing schema, which hides nothing: a client is allowed
+  everything the CLI is.
   """
-  generate(ws: Workspace!, pom: File!): Changeset! {
+  generatedWorkspace(ws: Workspace!, pom: File!): Workspace! {
     let plan = codegen.withClientEntry(
       codegen.corePlan(schemaJSON),
       module,
@@ -68,23 +70,6 @@ type Client {
     ws
       .withoutDirectory(codegen.workspaceRef(joinPath("sdk")))
       .withNewDirectory(codegen.workspaceRef(rootPath), out)
-      .changes(ws)
-  }
-
-  """
-  Seed the client directory with the given pom, leaving anything already there
-  alone: init must never remove a user's files.
-  """
-  init(ws: Workspace!, pom: File!): Changeset! {
-    ws.withNewDirectory(codegen.workspaceRef(rootPath), seeded(ws, pom)).changes(ws)
-  }
-
-  """
-  The client directory as it is, with the pom added when it has none.
-  """
-  let seeded(ws: Workspace!, pom: File!): Directory! {
-    let existing = existingDir(ws)
-    if (existing.exists("pom.xml")) { existing } else { existing.withFile("pom.xml", pom) }
   }
 
   """
@@ -92,6 +77,15 @@ type Client {
   """
   let joinPath(sub: String!): String! {
     if (rootPath == ".") { sub } else { rootPath + "/" + sub }
+  }
+
+  """
+  The client directory as it is, with the pom added when it has none: never
+  remove a user's files.
+  """
+  let seeded(ws: Workspace!, pom: File!): Directory! {
+    let existing = existingDir(ws)
+    if (existing.exists("pom.xml")) { existing } else { existing.withFile("pom.xml", pom) }
   }
 
   """
