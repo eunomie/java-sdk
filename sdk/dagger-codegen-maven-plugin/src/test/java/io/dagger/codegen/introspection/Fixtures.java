@@ -87,6 +87,24 @@ public final class Fixtures {
       String binding,
       String requiredArg,
       String optionalArg) {
+    return clientSchema(module, root, entry, binding, requiredArg, optionalArg, null);
+  }
+
+  /**
+   * The same schema with the entry point's arguments named as asked; when {@code
+   * requiredArgDefault} is non-null the otherwise-required arg carries that default value, which
+   * makes it optional to the caller even though its type stays non-null.
+   */
+  public static String clientSchema(
+      String module,
+      String root,
+      String entry,
+      String binding,
+      String requiredArg,
+      String optionalArg,
+      String requiredArgDefault) {
+    String requiredArgDefaultJson =
+        requiredArgDefault == null ? "" : ",\"defaultValue\":\"" + requiredArgDefault + "\"";
     return "{\"__schema\":{\"queryType\":{\"name\":\"Query\"},\"types\":["
         + "{\"name\":\"__Schema\",\"kind\":\"OBJECT\",\"fields\":[]},"
         + "{\"name\":\"String\",\"kind\":\"SCALAR\"},"
@@ -98,7 +116,9 @@ public final class Fixtures {
         + "\",\"args\":["
         + "    {\"name\":\""
         + requiredArg
-        + "\",\"type\":{\"kind\":\"NON_NULL\",\"ofType\":{\"kind\":\"SCALAR\",\"name\":\"String\"}}},"
+        + "\",\"type\":{\"kind\":\"NON_NULL\",\"ofType\":{\"kind\":\"SCALAR\",\"name\":\"String\"}}"
+        + requiredArgDefaultJson
+        + "},"
         + "    {\"name\":\""
         + optionalArg
         + "\",\"type\":{\"kind\":\"SCALAR\",\"name\":\"String\"}}"

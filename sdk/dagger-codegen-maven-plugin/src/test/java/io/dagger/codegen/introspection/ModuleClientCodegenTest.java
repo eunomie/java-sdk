@@ -35,6 +35,22 @@ class ModuleClientCodegenTest {
   }
 
   @Test
+  void aDefaultedConstructorArgumentIsOptionalNotAMandatoryFactoryParameter() throws Exception {
+    // A non-null constructor arg that carries a default — how a @Default parameter reaches the
+    // schema — may be omitted by the caller, so it belongs in the optional-arguments bag, not as a
+    // mandatory from() parameter.
+    String hello =
+        generate(
+            Fixtures.clientSchema(
+                "hello", "Hello", "hello", "asHello", "name", "greeting", "world"),
+            LOCAL);
+    assertThat(hello)
+        .contains("public static Hello from(Session dag)")
+        .contains("public static Hello from(Session dag, HelloArguments optArgs)")
+        .doesNotContain("public static Hello from(Session dag, String name)");
+  }
+
+  @Test
   void theAliasIsNamedAfterTheModuleAndDelegates() throws Exception {
     String hello = generate(Fixtures.clientSchema("hello", "Hello", "hello", "asHello"), LOCAL);
     assertThat(hello)

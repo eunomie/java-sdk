@@ -107,19 +107,30 @@ public class Field {
   }
 
   boolean hasOptionalArgs() {
-    return getArgs().stream().filter(arg -> arg.getType().isOptional()).count() > 0;
+    return getArgs().stream().anyMatch(Field::isArgOptional);
   }
 
   /** Returns the list of optional argument of this field */
   List<InputObject> getOptionalArgs() {
     if (optionalArgs == null) {
-      optionalArgs = args.stream().filter(arg -> arg.getType().isOptional()).toList();
+      optionalArgs = args.stream().filter(Field::isArgOptional).toList();
     }
     return optionalArgs;
   }
 
   List<InputObject> getRequiredArgs() {
-    return args.stream().filter(arg -> !arg.getType().isOptional()).toList();
+    return args.stream().filter(arg -> !isArgOptional(arg)).toList();
+  }
+
+  /**
+   * Whether the caller may omit this argument: a nullable type, or a non-null type carrying a
+   * default the engine applies when it is absent. A defaulted non-null arg — how a module
+   * constructor argument with {@code @Default} reaches the schema — is optional; treating it as
+   * required would force every caller, including a module client's {@code from} factory, to pass
+   * it.
+   */
+  private static boolean isArgOptional(InputObject arg) {
+    return arg.getType().isOptional() || arg.getDefaultValue() != null;
   }
 
   @Override
