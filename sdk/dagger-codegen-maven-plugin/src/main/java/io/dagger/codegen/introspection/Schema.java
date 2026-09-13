@@ -15,6 +15,10 @@ public class Schema {
   private static final ComparableVersion NULLABLE_OBJECTS_VERSION =
       new ComparableVersion("1.0.0-beta.10");
 
+  /** Scalars the generator never emits, because Java already has them. */
+  static final List<String> BUILTIN_SCALARS =
+      List.of("Boolean", "String", "Float", "Int", "DateTime");
+
   public static class SchemaContainer {
 
     @JsonbProperty("__schema")
@@ -105,8 +109,7 @@ public class Schema {
 
     filteredTypes.stream()
         .filter(t -> t.getKind() == TypeKind.SCALAR)
-        .filter(
-            t -> !List.of("Boolean", "String", "Float", "Int", "DateTime").contains(t.getName()))
+        .filter(t -> !BUILTIN_SCALARS.contains(t.getName()))
         .forEach(visitor::visitScalar);
 
     filteredTypes.stream()

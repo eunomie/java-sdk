@@ -99,6 +99,27 @@ public class Type {
   }
 
   /**
+   * The same type carrying only the given fields.
+   *
+   * <p>A copy rather than a mutation: the schema this narrows stays whole, so the fields left out
+   * here are still reachable from it. The fields are shared with it too, and re-parenting them
+   * would rewrite it; the visitors only ever read the parent's name, which the copy keeps.
+   */
+  Type withFields(List<Field> narrowed) {
+    Type copy = new Type();
+    copy.kind = kind;
+    copy.name = name;
+    copy.description = description;
+    copy.inputFields = inputFields;
+    copy.enumValues = enumValues;
+    copy.interfaces = interfaces;
+    copy.possibleTypes = possibleTypes;
+    copy.directives = directives;
+    copy.fields = narrowed;
+    return copy;
+  }
+
+  /**
    * Checks if this type has an "id" field. With unified IDs, the id field returns the unified ID
    * scalar. Falls back to legacy FooID check.
    */
