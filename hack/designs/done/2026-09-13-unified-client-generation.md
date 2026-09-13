@@ -1,6 +1,6 @@
 # Unified client generation
 
-Status: proposed
+Status: implemented
 Date: 2026-09-13
 
 ## Terms
@@ -643,6 +643,26 @@ migration, and the README documents the move.
 **Size.** This changes the code generator, the runtime library, the generation
 driver and the test suite together. See **On shipping this as one change**.
 
+## Left for later
+
+**`ClientPom` infers the indentation of the block it inserts** from the file
+around it, which is roughly sixty lines more than the problem needs. It is well
+covered by tests. Emitting the profile at a fixed indentation would delete that
+machinery, at the cost of a block indented differently from its surroundings,
+which Maven does not care about.
+
+**The packager copies whole directories out of a shared Maven cache volume.**
+`codegenPluginRepo` in `.dagger/modules/packager/main.dang` exports the
+committed plugin repository with `cp -r` of three names, so anything another
+run left beside them under `io/dagger` is swept into the committed tree. That is
+what makes `packager:generate` sensitive to the history of a cache volume that
+outlives any one job. Copying only the files it publishes would make it immune.
+
+**The generator still has a single-schema path.** `-Ddaggerengine.schema=<file>`
+is exactly a plan with only a core entry, so the branch in `DaggerCodegenMojo`
+and the schema walk it uses could both go once the packager writes a one-entry
+plan instead.
+
 ## Generation, end to end
 
 ```mermaid
@@ -870,3 +890,20 @@ rather than eager and per session.
   `templates` module, and editing the output without the source leaves
   `templates:generate` reporting unapplied changes. Both patches that touch
   `main.dang` now carry the matching template edit.
+- **Phases 6 to 8, done.** Draft pull request `dagger/java-sdk#23`, opened on
+  head `c62af4d7f45007bfbef194a8d3575310620e6945` with base
+  `24f430a529a5aa07b0d3ca64417d8f460394f004`. Every check green.
+
+  One check, `packager:generate`, was red for the first two runs and was not
+  this change: it rebuilds the committed codegen plugin jar out of a Maven cache
+  volume that persists across jobs, and something already in that volume was
+  swept into the comparison. Three measurements settled it. A rebuild against a
+  never-used cache volume reproduced the committed bytes exactly. A rebuild
+  against a volume deliberately primed by a real module generation reproduced
+  them too, which ruled out the first suspected mechanism. And the same check
+  was green on `24f430a5` itself, so the environment does reproduce a correctly
+  committed jar. A cache-busting re-run then passed in 25.3s.
+
+  The remaining hardening is recorded above under residual work: the packager
+  copies whole directories out of that shared volume rather than the files it
+  publishes, which is what makes it sensitive to the volume's history at all.

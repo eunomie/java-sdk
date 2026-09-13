@@ -3,7 +3,7 @@
 Status: proposed
 Date: 2026-09-04
 
-> Superseded in part by `hack/designs/2026-09-13-unified-client-generation.md`,
+> Superseded in part by `hack/designs/done/2026-09-13-unified-client-generation.md`,
 > which is the separate design this one asked for. Standalone clients are no
 > longer refused, and a client's types no longer land in the flat
 > `io.dagger.client` package.

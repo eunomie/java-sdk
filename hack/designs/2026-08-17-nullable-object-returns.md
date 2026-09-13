@@ -5,7 +5,7 @@ Date: 2026-08-17
 
 > One decision below was later reversed. This document rejects making the query
 > transport public API because it would be permanent surface added for one test.
-> `hack/designs/2026-09-13-unified-client-generation.md` makes it public for a
+> `hack/designs/done/2026-09-13-unified-client-generation.md` makes it public for a
 > different reason: generated code now lives outside `io.dagger.client` and has
 > to be able to build a query.
 
