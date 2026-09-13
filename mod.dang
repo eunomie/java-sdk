@@ -14,140 +14,17 @@ type Mod {
   let ws: Workspace!
 
   """
+  The modules this one calls. Their bindings are generated into the module's
+  vendored SDK, one Java package each.
+  """
+  let targets: [ModuleSource!]!
+
+  """
   Whether to commit the compiled SDK jar into the module (see JavaSdk.vendorSdkJar).
   """
   let vendorSdkJar: Boolean!
 
-  """
-  The shared local Maven repository.
-
-  Mounted LOCKED, not shared: seeding it from the committed prebuilt repository
-  is a plain recursive copy, and two generations running at once race on it —
-  `cp: cannot create directory ...: File exists`. Generating two Java modules
-  concurrently is ordinary, so the mount serializes rather than the callers.
-  """
-  let mavenRepo: CacheVolume! { cacheVolume("sdk-java-maven-m2") }
-
-  """
-  Maven container used for codegen (pinned digest, matches the builtin runtime).
-  """
-  let mvn: Container! {
-    container.from("maven:3.9.9-eclipse-temurin-21-alpine@sha256:4cbb8bf76c46b97e028998f2486ed014759a8e932480431039bdb93dffe6813e")
-  }
-
-  """
-  The vendored Java SDK Maven reactor shipped with this module.
-  """
-  let sdkSourceDir: Directory! { currentModule.source.directory("sdk") }
-
-  """
-  Vendor the Java SDK as buildable source for a module:
-    src/main/java        the hand-written SDK library
-    src/processor/java   the annotation processor that generates the entrypoint
-    src/generated/java   the client bindings generated from the engine schema
-    src/processor/resources/META-INF/services/...Processor
-  The returned directory is dropped at <module>/sdk.
-  """
-  let prebuiltCodegenRepo: String! { "prebuilt/m2" }
-
-  let prebuiltCodegenPlugin: String! { "prebuilt/dagger-codegen-maven-plugin.jar" }
-
-  """
-  A maven container with the codegen plugin available in the local repository.
-
-  Fast path: when the packager module has committed the plugin's local Maven
-  repository under prebuilt/m2, drop it into ~/.m2/repository with a plain copy —
-  no maven invocation. Otherwise fall back to installing a committed plugin jar,
-  and finally to compiling the plugin from the vendored sources.
-  """
-  let codegenBase(introspectionJSON: File!): Container! {
-    let base = mvn
-      .withoutEntrypoint
-      .withMountedCache("/root/.m2", mavenRepo, sharing: CacheSharingMode.LOCKED)
-      .withMountedFile("/schema.json", introspectionJSON)
-      .withDirectory("/dagger-io", sdkSourceDir)
-      .withWorkdir("/dagger-io")
-
-    if (currentModule.source.exists(prebuiltCodegenRepo + "/io/dagger")) {
-      base
-        .withDirectory("/prebuilt-m2", currentModule.source.directory(prebuiltCodegenRepo))
-        .withExec(["sh", "-c", "mkdir -p /root/.m2/repository && cp -r /prebuilt-m2/. /root/.m2/repository/"])
-    } else if (currentModule.source.exists(prebuiltCodegenPlugin)) {
-      base
-        .withMountedFile("/codegen-plugin.jar", currentModule.source.file(prebuiltCodegenPlugin))
-        .withExec(["mvn", "install:install-file", "-Dfile=/dagger-io/pom.xml", "-Dpackaging=pom", "-DpomFile=/dagger-io/pom.xml", "--no-transfer-progress"])
-        .withExec(["mvn", "install:install-file", "-Dfile=/codegen-plugin.jar", "-DpomFile=/dagger-io/dagger-codegen-maven-plugin/pom.xml", "--no-transfer-progress"])
-    } else {
-      base.withExec(["mvn", "--projects", "dagger-codegen-maven-plugin", "--also-make", "install", "-T1C", "-Dmaven.test.skip=true", "-Dfmt.skip=true", "--no-transfer-progress"])
-    }
-  }
-
-  """
-  Build and install the SDK + annotation processor jars, returning the maven
-  container.
-
-  Uses install (rather than generate-sources) so the compiled jars land in the
-  local Maven repository — the dagger-prebuilt-sdk pom profile compiles the
-  entrypoint against them instead of recompiling the vendored SDK sources. Jars
-  are installed under a per-module version so modules that resolve to different
-  schemas (different dependencies, or a different engine) never share a Maven
-  coordinate; the codegen plugin keeps its own fixed version and resolves from the
-  prebuilt repo. Cached across a module's own edits.
-  """
-  let sdkBuilt(introspectionJSON: File!, name: String!): Container! {
-    codegenBase(introspectionJSON)
-      .withExec(["mvn", "versions:set", "-DnewVersion=" + name, "-DgenerateBackupPoms=false", "--no-transfer-progress"])
-      .withExec(["mvn", "--projects", "dagger-java-sdk,dagger-java-annotation-processor", "--also-make", "install", "-Ddaggerengine.schema=/schema.json", "-Ddaggerengine.version=" + engineVersion, "-Dmaven.test.skip=true", "-Dfmt.skip=true", "--no-transfer-progress"])
-  }
-
-  """
-  The live engine version, without build metadata.
-
-  Codegen only reads the engine version off the CLI when it has to query the
-  schema itself. Here the schema is handed to it, so without this the version
-  stays whatever the pom happens to say, and generation cannot tell which shapes
-  the engine on the other end actually supports.
-
-  The `+<commit>` suffix is dropped: it changes on every engine build and would
-  make every module's SDK rebuild for no reason.
-  """
-  let engineVersion: String! { version.split("+")[0] ?? version }
-
-  let vendoredSdk(introspectionJSON: File!, name: String!): Directory! {
-    let built = sdkBuilt(introspectionJSON, name)
-    directory
-      .withDirectory("src/main/java", built.directory("/dagger-io/dagger-java-sdk/src/main/java"))
-      .withDirectory(
-        "src/processor/java",
-        built.directory("/dagger-io/dagger-java-annotation-processor/src/main/java"),
-      )
-      .withDirectory(
-        "src/generated/java",
-        built.directory("/dagger-io/dagger-java-sdk/target/generated-sources/dagger"),
-      )
-      .withNewFile(
-        "src/processor/resources/META-INF/services/javax.annotation.processing.Processor",
-        "io.dagger.annotation.processor.DaggerModuleAnnotationProcessor\n",
-      )
-  }
-
-  """
-  Capture the compiled SDK jar as a small local Maven repository to commit under
-  <module>/sdk/repo. Stored at a fixed version so the module pom's
-  dagger-vendored-sdk-jar profile resolves it; the runtime build then compiles
-  only the module's own code against the jar rather than the vendored sources.
-  """
-  let vendoredSdkJar(introspectionJSON: File!, name: String!): Directory! {
-    let jar = sdkBuilt(introspectionJSON, name)
-      .withExec(["sh", "-c", "mkdir -p /out && cp /root/.m2/repository/io/dagger/dagger-java-sdk/" + name + "/dagger-java-sdk-" + name + ".jar /out/dagger-java-sdk-0.21.4.jar"])
-      .file("/out/dagger-java-sdk-0.21.4.jar")
-    directory
-      .withFile("io/dagger/dagger-java-sdk/0.21.4/dagger-java-sdk-0.21.4.jar", jar)
-      .withNewFile(
-        "io/dagger/dagger-java-sdk/0.21.4/dagger-java-sdk-0.21.4.pom",
-        "<project><modelVersion>4.0.0</modelVersion><groupId>io.dagger</groupId><artifactId>dagger-java-sdk</artifactId><version>0.21.4</version><packaging>jar</packaging></project>\n",
-      )
-  }
+  let codegen: Codegen! { Codegen() }
 
   """
   Compile the module with the annotation processor enabled (proc=full) so it
@@ -155,9 +32,9 @@ type Mod {
   directory (the entrypoint) for vendoring under <module>/src/generated/java.
   """
   let generatedEntrypoint(moduleDir: Directory!, name: String!): Directory! {
-    mvn
+    codegen.mvn
       .withoutEntrypoint
-      .withMountedCache("/root/.m2", mavenRepo, sharing: CacheSharingMode.LOCKED)
+      .withMountedCache("/root/.m2", codegen.mavenRepo, sharing: CacheSharingMode.LOCKED)
       .withDirectory("/module", moduleDir)
       .withWorkdir("/module")
       .withEnvVariable("_DAGGER_JAVA_SDK_MODULE_NAME", name)
@@ -172,8 +49,8 @@ type Mod {
   generated: Workspace! {
     let modSource = ws.moduleSource(workspaceRef(rootPath))
     let name = modSource.moduleName
-    let introspectionJSON = modSource.introspectionSchemaJSON
-    let vendored = vendoredSdk(introspectionJSON, name)
+    let plan = codegen.modulePlan(modSource.introspectionSchemaJSON, targets)
+    let vendored = codegen.vendoredSdk(plan, name)
 
     # the module as committed, with the whole committed sdk/ dropped (source and
     # any previously vendored jar) and the freshly vendored SDK sources overlaid,
@@ -184,14 +61,17 @@ type Mod {
       .withoutDirectory("src/generated")
     let entrypoint = generatedEntrypoint(baseDir, name)
 
+    # sdk/ is replaced rather than merged: a target that is no longer requested
+    # has to lose its package, and an overlay would leave it behind.
     let staged = ws
+      .withoutDirectory(workspaceRef(joinPath(rootPath, "sdk")))
       .withNewDirectory(workspaceRef(joinPath(rootPath, "sdk")), vendored)
       .withNewDirectory(workspaceRef(joinPath(rootPath, "src/generated/java")), entrypoint)
 
     if (vendorSdkJar) {
       staged.withNewDirectory(
         workspaceRef(joinPath(rootPath, "sdk/repo")),
-        vendoredSdkJar(introspectionJSON, name),
+        codegen.vendoredSdkJar(plan, name),
       )
     } else {
       staged

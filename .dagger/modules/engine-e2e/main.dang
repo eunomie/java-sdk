@@ -72,4 +72,81 @@ type EngineE2e {
 
     null
   }
+
+  let clientModulePath: String! = ".dagger/modules/client-smoke"
+  let gitClientRef: String! = "github.com/dagger/sdk-helpers@v1.0.2"
+
+  """
+  A Dagger module that declares a client loads that client at run time.
+
+  Every other check generates a scope or compiles one; none runs the result, so
+  the serve a client package performs on first use — the descriptor it holds,
+  the round trip to the engine, the module it names — is otherwise unproven. The
+  module source calls sdkHelpers() and nothing else: the entry point serves
+  before it builds anything, so constructing the client is already the round
+  trip, and a refusal surfaces as a failed call rather than as a value.
+
+  A git client, because that is the kind a module loads for itself today. A
+  workspace-local client inside a module is still served by the engine and would
+  prove nothing about this path.
+  """
+  pub javaClientRuntimeCheck(ws: Workspace!): Void @check {
+    let withClient = playground(ws)
+      .withExec(["dagger", "-y", "module", "init", "java", "--name", "client-smoke", "--path", clientModulePath])
+      # The client is declared by appending to the scope table `module init`
+      # just wrote, rather than by `dagger module client add java`, which fails
+      # on the pinned engine: calling findClientRoot over the SDK interface
+      # cannot assign its non-null String result into a nullable String field
+      # ("cannot set field of type dagql.Nullable[String] with dagql.String").
+      # That is an engine defect rather than one of this SDK's, and it is worth
+      # a fix upstream — the README documents the command this cannot use.
+      #
+      # If the line ever lands in the wrong table, generation produces no client
+      # package and the module source below stops compiling, so a silent miss is
+      # not among the ways this can go wrong.
+      .withExec(["sh", "-c", "printf 'clients = [\"" + gitClientRef + "\"]\\n' >> dagger.toml"])
+      .withWorkdir(clientModulePath)
+      .withNewFile(
+        "src/main/java/io/dagger/modules/clientsmoke/ClientSmoke.java",
+        clientSmokeSource,
+      )
+      .withExec(["dagger", "-y", "generate"])
+
+    # Back to the workspace root the module path is relative to: the checkout is
+    # mounted at the playground's own cwd, so it has no absolute path to name.
+    let served = withClient
+      .withWorkdir("../../..")
+      .withExec(["dagger", "-m", clientModulePath, "call", "loads-its-client"])
+      .stdout
+    assert(
+      served.contains("served"),
+      "the module did not load its client at run time: " + served,
+    )
+
+    null
+  }
+
+  """
+  Module source that reaches a client and nothing else.
+  """
+  let clientSmokeSource: String! {
+    "package io.dagger.modules.clientsmoke;\n"
+      + "\n"
+      + "import static io.dagger.client.modules.sdkhelpers.SdkHelpers.sdkHelpers;\n"
+      + "\n"
+      + "import io.dagger.client.exception.DaggerQueryException;\n"
+      + "import io.dagger.module.annotation.Function;\n"
+      + "import io.dagger.module.annotation.Object;\n"
+      + "import java.util.concurrent.ExecutionException;\n"
+      + "\n"
+      + "@Object\n"
+      + "public class ClientSmoke {\n"
+      + "  @Function\n"
+      + "  public String loadsItsClient()\n"
+      + "      throws ExecutionException, DaggerQueryException, InterruptedException {\n"
+      + "    sdkHelpers();\n"
+      + "    return \"served\";\n"
+      + "  }\n"
+      + "}\n"
+  }
 }

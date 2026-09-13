@@ -91,6 +91,7 @@ type JavaSdk {
       Mod(
         rootPath: scope,
         ws: configured,
+        targets: clients,
         vendorSdkJar: vendorSdkJar,
       ).generated.withWorkdir(scope)
     }

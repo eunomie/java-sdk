@@ -273,12 +273,38 @@ type E2e {
       "a client should not be pinned unless the SDK is locked",
     )
 
-    # The payoff: because the client is recorded as a dependency, the module's
-    # introspection schema carries its types and so do the generated bindings.
-    let bindings = withClient.directory("/" + bindingsDir).entries
+    # The payoff: the client's own types are generated into a package of their
+    # own, and that package is the whole of how the client is reached.
+    let clientPackage = bindingsDir + "/modules/clientdep"
+    let bindings = withClient.directory("/" + clientPackage).entries
     assert(
-      bindings.filter { entry => entry.contains("ClientDep") }.length > 0,
-      "no ClientDep binding under " + bindingsDir + ", only: " + bindings.join(", "),
+      contains(bindings, "ClientDep.java"),
+      "no ClientDep.java under " + clientPackage + ", only: " + bindings.join(", "),
+    )
+    assert(
+      contains(withClient.directory("/" + bindingsDir).entries, "ClientDep.java") == false,
+      "a client's types belong to its own package, not to core",
+    )
+    # The entry point is a static method on the client's own root type, so a
+    # caller writes clientDep(...) after one import rather than reaching through
+    # a global dag(). Core is left untouched by the client.
+    assertContains(
+      withClient.file("/" + clientPackage + "/ClientDep.java").contents,
+      "public static ClientDep clientDep(",
+      "the client package should carry its own entry point",
+    )
+    assertNotContains(
+      withClient.file("/" + bindingsDir + "/Client.java").contents,
+      "clientdep",
+      "core should not name a client package",
+    )
+    # A local target inside a module is the one case the client cannot load
+    # itself: a module runtime has no session to resolve a workspace path
+    # against, so the engine serves it from the manifest instead.
+    assertNotContains(
+      withClient.file("/" + clientPackage + "/ClientDep.java").contents,
+      "ModuleTargets",
+      "a local target inside a module is served by the engine, not by the client",
     )
 
     let withoutClient = javaSdk.generateScope(withClient, isModule: true, name: clientAppName, clients: [])
@@ -288,9 +314,12 @@ type E2e {
       "removing the last client should drop the dependency",
     )
     assert(
-      withoutClient.directory("/" + bindingsDir).entries
-        .filter { entry => entry.contains("ClientDep") }.length == 0,
-      "removing the client should drop its types from the bindings",
+      withoutClient.directory("/" + bindingsDir).exists("modules/clientdep") == false,
+      "removing the client should drop its package",
+    )
+    assert(
+      withoutClient.directory("/" + bindingsDir).exists("modules") == false,
+      "removing the last client should drop the modules tree",
     )
 
     null
@@ -315,19 +344,40 @@ type E2e {
       "/" + defaultsAppPath + "/src/main/java/io/dagger/modules/defaultsapp/DefaultsApp.java",
       clientOptionalArgsSource,
     )
-    let bindings = javaSdk
-      .generateScope(withSource, isModule: true, name: defaultsAppName, clients: [client])
-      .file("/" + defaultsAppPath + "/sdk/src/generated/java/io/dagger/client/Client.java")
+    let generated = javaSdk.generateScope(
+      withSource,
+      isModule: true,
+      name: defaultsAppName,
+      clients: [client],
+    )
+    let bindings = generated
+      .file(
+        "/" + defaultsAppPath
+          + "/sdk/src/generated/java/io/dagger/client/modules/clientdefaults/ClientDefaults.java",
+      )
       .contents
 
+    # Both forms: one naming the session, one over the ambient one. The
+    # arguments holder is nested in the client's own root type, so it travels
+    # with the method rather than staying behind on core.
     assertContainsAll(bindings, [
-      "public ClientDefaults clientDefaults() {",
-      "public ClientDefaults clientDefaults(ClientDefaultsArguments optArgs) {",
+      "public static ClientDefaults clientDefaults(Client dag) {",
+      "public static ClientDefaults clientDefaults() {",
+      "public static ClientDefaults clientDefaults(Client dag, ClientDefaultsArguments optArgs) {",
+      "public static ClientDefaults clientDefaults(ClientDefaultsArguments optArgs) {",
+      "public static class ClientDefaultsArguments",
     ])
     assertNotContains(
       bindings,
-      "clientDefaults(String name",
+      "clientDefaults(Client dag, String name",
       "an argument with a default should not be a required parameter",
+    )
+    assertNotContains(
+      generated
+        .file("/" + defaultsAppPath + "/sdk/src/generated/java/io/dagger/client/Client.java")
+        .contents,
+      "clientDefaults",
+      "core should not gain an accessor for a client",
     )
 
     null
@@ -437,10 +487,10 @@ type E2e {
   let clientOptionalArgsSource: String! {
     "package io.dagger.modules.defaultsapp;\n"
       + "\n"
-      + "import static io.dagger.client.Dagger.dag;\n"
+      + "import static io.dagger.client.modules.clientdefaults.ClientDefaults.clientDefaults;\n"
       + "\n"
-      + "import io.dagger.client.Client;\n"
       + "import io.dagger.client.exception.DaggerQueryException;\n"
+      + "import io.dagger.client.modules.clientdefaults.ClientDefaults;\n"
       + "import io.dagger.module.annotation.Function;\n"
       + "import io.dagger.module.annotation.Object;\n"
       + "import java.util.concurrent.ExecutionException;\n"
@@ -450,15 +500,17 @@ type E2e {
       + "  @Function\n"
       + "  public String defaults()\n"
       + "      throws ExecutionException, DaggerQueryException, InterruptedException {\n"
-      + "    return dag().clientDefaults().greeting();\n"
+      + "    return clientDefaults().greeting();\n"
       + "  }\n"
       + "\n"
       + "  @Function\n"
       + "  public String overridden()\n"
       + "      throws ExecutionException, DaggerQueryException, InterruptedException {\n"
-      + "    return dag()\n"
-      + "        .clientDefaults(\n"
-      + "            new Client.ClientDefaultsArguments().withName(\"java\").withTimes(2).withSuffix(\"!\"))\n"
+      + "    return clientDefaults(\n"
+      + "            new ClientDefaults.ClientDefaultsArguments()\n"
+      + "                .withName(\"java\")\n"
+      + "                .withTimes(2)\n"
+      + "                .withSuffix(\"!\"))\n"
       + "        .greeting();\n"
       + "  }\n"
       + "}\n"

@@ -1,0 +1,240 @@
+"""
+Code generation, shared by every Java scope.
+
+A module's vendored SDK and a standalone project's client tree come out of the
+same plan and the same Maven invocation. What differs is the plan: a module has
+a schema of its own for core, a standalone project has only its targets.
+"""
+type Codegen {
+  """
+  The shared local Maven repository.
+
+  Mounted LOCKED, not shared: seeding it from the committed prebuilt repository
+  is a plain recursive copy, and two generations running at once race on it —
+  `cp: cannot create directory ...: File exists`. Generating two Java scopes
+  concurrently is ordinary, so the mount serializes rather than the callers.
+  """
+  let mavenRepo: CacheVolume! { cacheVolume("sdk-java-maven-m2") }
+
+  """
+  Maven container used for codegen (pinned digest, matches the builtin runtime).
+  """
+  let mvn: Container! {
+    container.from("maven:3.9.9-eclipse-temurin-21-alpine@sha256:4cbb8bf76c46b97e028998f2486ed014759a8e932480431039bdb93dffe6813e")
+  }
+
+  """
+  The vendored Java SDK Maven reactor shipped with this module.
+  """
+  let sdkSourceDir: Directory! { currentModule.source.directory("sdk") }
+
+  let prebuiltCodegenRepo: String! { "prebuilt/m2" }
+
+  let prebuiltCodegenPlugin: String! { "prebuilt/dagger-codegen-maven-plugin.jar" }
+
+  """
+  The live engine version, without build metadata.
+
+  Codegen only reads the engine version off the CLI when it has to query the
+  schema itself. Here the schema is handed to it, so without this the version
+  stays whatever the pom happens to say, and generation cannot tell which shapes
+  the engine on the other end actually supports.
+
+  The `+<commit>` suffix is dropped: it changes on every engine build and would
+  make every scope's SDK rebuild for no reason.
+  """
+  let engineVersion: String! { version.split("+")[0] ?? version }
+
+  """
+  The plan for a scope that has a module: core comes from the module's own
+  schema, which is the one the engine narrows to what module code may call.
+  """
+  let modulePlan(coreSchema: File!, targets: [ModuleSource!]!): Directory! {
+    withTargets(
+      directory.withFile("core/schema.json", coreSchema),
+      targets,
+      servesWorkspacePaths: false,
+    )
+  }
+
+  """
+  The plan for a scope that has no module. It has no schema of its own, so the
+  generator merges core from the targets and refuses targets that disagree.
+  """
+  let clientPlan(targets: [ModuleSource!]!): Directory! {
+    if (targets.length == 0) {
+      raise "a client scope needs at least one target to generate"
+    } else {
+      withTargets(directory, targets, servesWorkspacePaths: true)
+    }
+  }
+
+  """
+  One plan entry per target: the client-facing schema of that module alone, the
+  name it is generated under, and — when the generated client is the one that
+  loads it — where it lives. The name travels in a file because it is the
+  generator that decides what package it becomes.
+
+  `servesWorkspacePaths` is false for a scope whose code runs as a module. A
+  module runtime has no session to resolve a workspace path against, so a local
+  target is left to the engine, which serves a module's declared dependencies
+  before its code runs. A git target is reachable from anywhere and is served by
+  the client in either scope, which is what makes its package come out byte for
+  byte the same on both sides.
+  """
+  let withTargets(
+    plan: Directory!,
+    targets: [ModuleSource!]!,
+    servesWorkspacePaths: Boolean!,
+  ): Directory! {
+    targets.reduce(plan) { acc, target =>
+      # The entry is a directory named after the target, so a name that is not a
+      # single path segment would silently produce an entry the generator then
+      # reports as malformed.
+      let dir = if (target.moduleName.contains("/")) {
+        raise "module name " + target.moduleName + " is not a single path segment"
+      } else {
+        "target-" + target.moduleName
+      }
+      let entry = acc
+        .withFile(dir + "/schema.json", target.clientSchemaIntrospectionJSON)
+        .withNewFile(dir + "/module", target.moduleName)
+      if (target.kind == ModuleSourceKind.GIT_SOURCE or servesWorkspacePaths) {
+        entry.withNewFile(dir + "/source", targetDescriptor(target))
+      } else {
+        entry
+      }
+    }
+  }
+
+  """
+  Where one target lives, for the generator to hold in the client package as a
+  constant. A git target carries the commit it resolved to now, so the program
+  talks to the module the bindings were generated from rather than to whatever
+  the branch has moved to since.
+
+  A kind on the first line and one field per line after it: a path or a git
+  reference may legally hold whatever delimiter would otherwise be chosen.
+  """
+  let targetDescriptor(target: ModuleSource!): String! {
+    if (target.kind == ModuleSourceKind.GIT_SOURCE) {
+      "git\n" + target.asString + "\n" + target.commit
+    } else {
+      # Workspace-root-absolute. The engine resolves a bare path from the
+      # session's cwd, which is wherever the program happens to be run from, and
+      # only a leading slash makes it mean the same thing every time.
+      "workspace\n/" + target.sourceRootSubpath
+    }
+  }
+
+  """
+  A maven container with the codegen plugin available in the local repository,
+  and the plan mounted at /plan.
+
+  Fast path: when the packager module has committed the plugin's local Maven
+  repository under prebuilt/m2, drop it into ~/.m2/repository with a plain copy —
+  no maven invocation. Otherwise fall back to installing a committed plugin jar,
+  and finally to compiling the plugin from the vendored sources.
+  """
+  let codegenBase(plan: Directory!): Container! {
+    let base = mvn
+      .withoutEntrypoint
+      .withMountedCache("/root/.m2", mavenRepo, sharing: CacheSharingMode.LOCKED)
+      .withMountedDirectory("/plan", plan)
+      .withDirectory("/dagger-io", sdkSourceDir)
+      .withWorkdir("/dagger-io")
+
+    if (currentModule.source.exists(prebuiltCodegenRepo + "/io/dagger")) {
+      base
+        .withDirectory("/prebuilt-m2", currentModule.source.directory(prebuiltCodegenRepo))
+        .withExec(["sh", "-c", "mkdir -p /root/.m2/repository && cp -r /prebuilt-m2/. /root/.m2/repository/"])
+    } else if (currentModule.source.exists(prebuiltCodegenPlugin)) {
+      base
+        .withMountedFile("/codegen-plugin.jar", currentModule.source.file(prebuiltCodegenPlugin))
+        .withExec(["mvn", "install:install-file", "-Dfile=/dagger-io/pom.xml", "-Dpackaging=pom", "-DpomFile=/dagger-io/pom.xml", "--no-transfer-progress"])
+        .withExec(["mvn", "install:install-file", "-Dfile=/codegen-plugin.jar", "-DpomFile=/dagger-io/dagger-codegen-maven-plugin/pom.xml", "--no-transfer-progress"])
+    } else {
+      base.withExec(["mvn", "--projects", "dagger-codegen-maven-plugin", "--also-make", "install", "-T1C", "-Dmaven.test.skip=true", "-Dfmt.skip=true", "--no-transfer-progress"])
+    }
+  }
+
+  """
+  Build and install the SDK + annotation processor jars, returning the maven
+  container.
+
+  Uses install (rather than generate-sources) so the compiled jars land in the
+  local Maven repository — the dagger-prebuilt-sdk pom profile compiles the
+  entrypoint against them instead of recompiling the vendored SDK sources. Jars
+  are installed under a per-scope version so scopes that resolve to different
+  schemas (different targets, or a different engine) never share a Maven
+  coordinate; the codegen plugin keeps its own fixed version and resolves from the
+  prebuilt repo. Cached across a scope's own edits.
+  """
+  let sdkBuilt(plan: Directory!, name: String!): Container! {
+    codegenBase(plan)
+      .withExec(["mvn", "versions:set", "-DnewVersion=" + name, "-DgenerateBackupPoms=false", "--no-transfer-progress"])
+      .withExec(["mvn", "--projects", "dagger-java-sdk,dagger-java-annotation-processor", "--also-make", "install", "-Ddaggerengine.plan=/plan", "-Ddaggerengine.version=" + engineVersion, "-Dmaven.test.skip=true", "-Dfmt.skip=true", "--no-transfer-progress"])
+  }
+
+  """
+  Vendor the Java SDK as buildable source for a module:
+    src/main/java        the hand-written SDK library
+    src/processor/java   the annotation processor that generates the entrypoint
+    src/generated/java   the bindings the plan produced
+    src/processor/resources/META-INF/services/...Processor
+  The returned directory is dropped at <module>/sdk.
+  """
+  let vendoredSdk(plan: Directory!, name: String!): Directory! {
+    let built = sdkBuilt(plan, name)
+    directory
+      .withDirectory("src/main/java", built.directory("/dagger-io/dagger-java-sdk/src/main/java"))
+      .withDirectory(
+        "src/processor/java",
+        built.directory("/dagger-io/dagger-java-annotation-processor/src/main/java"),
+      )
+      .withDirectory(
+        "src/generated/java",
+        built.directory("/dagger-io/dagger-java-sdk/target/generated-sources/dagger"),
+      )
+      .withNewFile(
+        "src/processor/resources/META-INF/services/javax.annotation.processing.Processor",
+        "io.dagger.annotation.processor.DaggerModuleAnnotationProcessor\n",
+      )
+  }
+
+  """
+  The client tree for a scope with no module, dropped at <scope>/dagger.
+
+  One source root rather than the module layout's several: the scope's own pom
+  is the user's, and the profile this SDK inserts into it adds exactly one
+  source directory. The annotation processor is left out — there is no module
+  for it to write an entry point for.
+  """
+  let vendoredClients(plan: Directory!, name: String!): Directory! {
+    let built = sdkBuilt(plan, name)
+    directory
+      .withDirectory("src/main/java", built.directory("/dagger-io/dagger-java-sdk/src/main/java"))
+      .withDirectory(
+        "src/main/java",
+        built.directory("/dagger-io/dagger-java-sdk/target/generated-sources/dagger"),
+      )
+  }
+
+  """
+  Capture the compiled SDK jar as a small local Maven repository to commit under
+  <module>/sdk/repo. Stored at a fixed version so the module pom's
+  dagger-vendored-sdk-jar profile resolves it; the runtime build then compiles
+  only the module's own code against the jar rather than the vendored sources.
+  """
+  let vendoredSdkJar(plan: Directory!, name: String!): Directory! {
+    let jar = sdkBuilt(plan, name)
+      .withExec(["sh", "-c", "mkdir -p /out && cp /root/.m2/repository/io/dagger/dagger-java-sdk/" + name + "/dagger-java-sdk-" + name + ".jar /out/dagger-java-sdk-0.21.4.jar"])
+      .file("/out/dagger-java-sdk-0.21.4.jar")
+    directory
+      .withFile("io/dagger/dagger-java-sdk/0.21.4/dagger-java-sdk-0.21.4.jar", jar)
+      .withNewFile(
+        "io/dagger/dagger-java-sdk/0.21.4/dagger-java-sdk-0.21.4.pom",
+        "<project><modelVersion>4.0.0</modelVersion><groupId>io.dagger</groupId><artifactId>dagger-java-sdk</artifactId><version>0.21.4</version><packaging>jar</packaging></project>\n",
+      )
+  }
+}
