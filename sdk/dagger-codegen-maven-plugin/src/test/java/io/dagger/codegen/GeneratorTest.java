@@ -218,11 +218,99 @@ class GeneratorTest {
         .hasMessageContaining("beta");
   }
 
+  /**
+   * A standalone scope has no module-facing schema. Core is then whatever its targets agree on,
+   * with everything any of them contributes taken out of it and emitted in that target's package.
+   */
   @Test
-  void aPlanWithNoCoreSchemaIsRefused() throws Exception {
-    assertThatThrownBy(() -> GenerationPlan.read(plan))
-        .isInstanceOf(IOException.class)
-        .hasMessageContaining("no core schema");
+  void withNoCoreSchemaCoreIsTakenFromTheTargets() throws Exception {
+    writePlanWithoutCore(target("alpha", ALPHA), target("beta", BETA));
+
+    generate();
+
+    assertThat(read("io/dagger/client/modules/alpha/Alpha.java"))
+        .contains("public static Alpha alpha(Client dag, String source)");
+    assertThat(read("io/dagger/client/modules/beta/Beta.java"))
+        .contains("public static Beta beta(Client dag)");
+    assertThat(read("io/dagger/client/Client.java")).doesNotContain("Alpha").doesNotContain("Beta");
+    assertThat(read("io/dagger/client/Container.java")).isNotEmpty();
+    assertThat(emitted())
+        .contains(
+            "io/dagger/client/modules/alpha/Alpha.java", "io/dagger/client/modules/beta/Beta.java");
+  }
+
+  @Test
+  void mergingCoreDoesNotDependOnTheOrderTheTargetsAreRead() throws Exception {
+    writePlanWithoutCore(target("alpha", ALPHA), target("beta", BETA));
+    generate();
+    String first = read("io/dagger/client/Client.java");
+
+    Path reversed = Files.createTempDirectory("plan-reversed-merge");
+    writePlanAt(reversed, null, target("beta", BETA), target("alpha", ALPHA));
+    Path secondOut = Files.createTempDirectory("out-reversed-merge");
+    new Generator(secondOut, StandardCharsets.UTF_8, VERSION)
+        .generate(GenerationPlan.read(reversed));
+
+    assertThat(Files.readString(secondOut.resolve("io/dagger/client/Client.java")))
+        .isEqualTo(first);
+  }
+
+  /**
+   * The engine renders core through each module's declared engine version, so two targets pinned to
+   * different ones hand back two different cores.
+   */
+  @Test
+  void targetsThatDisagreeAboutCoreAreRefused() throws Exception {
+    writePlanWithoutCore(target("alpha", ALPHA), target("beta", BETA_ON_A_NARROWER_CORE));
+
+    assertThatThrownBy(this::generate)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("do not agree on the core")
+        .hasMessageContaining("alpha")
+        .hasMessageContaining("beta has no type Binding");
+  }
+
+  /** Two cores can name exactly the same types and fields and still be different cores. */
+  @Test
+  void targetsThatAgreeOnEveryNameButNotOnAFieldTypeAreRefused() throws Exception {
+    writePlanWithoutCore(target("alpha", ALPHA), target("beta", BETA_RETURNING_ANOTHER_CORE_TYPE));
+
+    assertThatThrownBy(this::generate)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Query.container returns Container! in alpha and Directory! in beta");
+  }
+
+  /**
+   * A module scope has a core of its own, and its client packages are dropped next to it. A target
+   * rendered through a different engine version would compile against the wrong one.
+   */
+  @Test
+  void aTargetThatDisagreesWithTheModuleScopesCoreIsRefused() throws Exception {
+    writePlan(
+        CORE_WITH_TWO_TARGETS,
+        target("alpha", ALPHA_RETURNING_ANOTHER_CORE_TYPE),
+        target("beta", BETA));
+
+    assertThatThrownBy(this::generate)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("the module scope")
+        .hasMessageContaining("alpha")
+        .hasMessageContaining(
+            "Query.container returns Container! in the module scope and Directory! in alpha");
+  }
+
+  /**
+   * The engine hides part of core from module code, so a target's client-facing core holds types
+   * and fields the module-facing one does not. That is the healthy case, not skew.
+   */
+  @Test
+  void aTargetWhoseCoreIsWiderThanTheModuleScopesIsAccepted() throws Exception {
+    writePlan(CORE_WITH_TWO_TARGETS, target("alpha", ALPHA_ON_A_WIDER_CORE), target("beta", BETA));
+
+    generate();
+
+    assertThat(emitted()).contains("io/dagger/client/modules/alpha/Alpha.java");
+    assertThat(emitted()).doesNotContain("io/dagger/client/Host.java");
   }
 
   /**
@@ -278,10 +366,16 @@ class GeneratorTest {
     writePlanAt(plan, coreSchema, targets);
   }
 
+  private void writePlanWithoutCore(Entry... targets) throws IOException {
+    writePlanAt(plan, null, targets);
+  }
+
   private static void writePlanAt(Path root, String coreSchema, Entry... targets)
       throws IOException {
-    Files.createDirectories(root.resolve("core"));
-    Files.writeString(root.resolve("core/schema.json"), coreSchema);
+    if (coreSchema != null) {
+      Files.createDirectories(root.resolve("core"));
+      Files.writeString(root.resolve("core/schema.json"), coreSchema);
+    }
     for (int i = 0; i < targets.length; i++) {
       Path entry = root.resolve("target-" + i);
       Files.createDirectories(entry);
@@ -375,6 +469,27 @@ class GeneratorTest {
       """
           .formatted(owned("alpha"), owned("alpha"), owned("alpha"), owned("alpha"));
 
+  /**
+   * Alpha's client-facing core carries a type and a field the module-facing core does not, the way
+   * a real one carries Host and Query.host.
+   */
+  private static final String ALPHA_ON_A_WIDER_CORE =
+      """
+      {"__schema": {"queryType": {"name": "Query"}, "types": [
+        {"kind": "OBJECT", "name": "Query", "fields": [
+          {"name": "container", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Container"}}, "args": []},
+          {"name": "host", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Host"}}, "args": []},
+          {"name": "alpha", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Alpha"}}, "args": [], %s}
+        ]},
+        {"kind": "OBJECT", "name": "Container", "fields": []},
+        {"kind": "OBJECT", "name": "Host", "fields": []},
+        {"kind": "OBJECT", "name": "Binding", "fields": []},
+        {"kind": "OBJECT", "name": "Alpha", "fields": [], %s},
+        {"kind": "OBJECT", "name": "AlphaReport", "fields": [], %s}
+      ]}}
+      """
+          .formatted(owned("alpha"), owned("alpha"), owned("alpha"));
+
   /** Beta owns a type alpha owns too, as two targets whose namespaced names meet would. */
   private static final String BETA_OWNING_ALPHAS_TYPE =
       """
@@ -404,7 +519,8 @@ class GeneratorTest {
       """
           .formatted(owned("alpha"), owned("alpha"), owned("alpha"), owned("alpha"));
 
-  private static final String BETA =
+  /** Beta's core is missing a type alpha's has, as a pre-1.0 engine view would be. */
+  private static final String BETA_ON_A_NARROWER_CORE =
       """
       {"__schema": {"queryType": {"name": "Query"}, "types": [
         {"kind": "OBJECT", "name": "Query", "fields": [
@@ -414,4 +530,54 @@ class GeneratorTest {
       ]}}
       """
           .formatted(owned("beta"), owned("beta"));
+
+  private static final String BETA =
+      """
+      {"__schema": {"queryType": {"name": "Query"}, "types": [
+        {"kind": "OBJECT", "name": "Query", "fields": [
+          {"name": "container", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Container"}}, "args": []},
+          {"name": "beta", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Beta"}}, "args": [], %s}
+        ]},
+        {"kind": "OBJECT", "name": "Container", "fields": []},
+        {"kind": "OBJECT", "name": "Binding", "fields": []},
+        {"kind": "OBJECT", "name": "Beta", "fields": [], %s}
+      ]}}
+      """
+          .formatted(owned("beta"), owned("beta"));
+
+  /**
+   * Beta renames nothing: its core has exactly alpha's types and fields, and one of them returns
+   * something else.
+   */
+  private static final String BETA_RETURNING_ANOTHER_CORE_TYPE =
+      """
+      {"__schema": {"queryType": {"name": "Query"}, "types": [
+        {"kind": "OBJECT", "name": "Query", "fields": [
+          {"name": "container", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Directory"}}, "args": []},
+          {"name": "beta", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Beta"}}, "args": [], %s}
+        ]},
+        {"kind": "OBJECT", "name": "Container", "fields": []},
+        {"kind": "OBJECT", "name": "Directory", "fields": []},
+        {"kind": "OBJECT", "name": "Binding", "fields": []},
+        {"kind": "OBJECT", "name": "Beta", "fields": [], %s}
+      ]}}
+      """
+          .formatted(owned("beta"), owned("beta"));
+
+  /** Alpha's core disagrees with the module scope's about what {@code Query.container} returns. */
+  private static final String ALPHA_RETURNING_ANOTHER_CORE_TYPE =
+      """
+      {"__schema": {"queryType": {"name": "Query"}, "types": [
+        {"kind": "OBJECT", "name": "Query", "fields": [
+          {"name": "container", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Directory"}}, "args": []},
+          {"name": "alpha", "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Alpha"}}, "args": [], %s}
+        ]},
+        {"kind": "OBJECT", "name": "Container", "fields": []},
+        {"kind": "OBJECT", "name": "Directory", "fields": []},
+        {"kind": "OBJECT", "name": "Binding", "fields": []},
+        {"kind": "OBJECT", "name": "Alpha", "fields": [], %s},
+        {"kind": "OBJECT", "name": "AlphaReport", "fields": [], %s}
+      ]}}
+      """
+          .formatted(owned("alpha"), owned("alpha"), owned("alpha"));
 }

@@ -4,6 +4,7 @@ import io.dagger.codegen.introspection.ClientEntryPoint;
 import io.dagger.codegen.introspection.CodegenVisitor;
 import io.dagger.codegen.introspection.ModuleTargetRef;
 import io.dagger.codegen.introspection.Schema;
+import io.dagger.codegen.introspection.SchemaMerge;
 import io.dagger.codegen.introspection.SchemaPartition;
 import io.dagger.codegen.introspection.TypeRegistry;
 import java.io.IOException;
@@ -33,7 +34,6 @@ public final class Generator {
   }
 
   public void generate(GenerationPlan plan) throws IOException {
-    Schema coreSchema = read(plan.coreSchema());
     Map<String, String> packages =
         ModulePackage.packagesFor(
             plan.targets().stream().map(GenerationPlan.Target::module).toList());
@@ -42,7 +42,7 @@ public final class Generator {
     // receivers it enters on: no package can be emitted until every type's home is known.
     Map<String, String> packageByTypeName = new LinkedHashMap<>();
     Map<String, String> targetByTypeName = new LinkedHashMap<>();
-    Map<String, Schema> schemas = new LinkedHashMap<>();
+    LinkedHashMap<String, Schema> schemas = new LinkedHashMap<>();
     Map<String, ClientEntryPoint> entryPoints = new LinkedHashMap<>();
     for (GenerationPlan.Target target : plan.targets()) {
       Schema schema = read(target.schema());
@@ -56,8 +56,16 @@ public final class Generator {
       }
     }
 
+    Schema coreSchema =
+        plan.coreSchema() == null ? SchemaMerge.core(schemas) : read(plan.coreSchema());
     requireEveryOwnedModulePlanned(coreSchema, packages.keySet());
     requireNoTargetShadowsCore(coreSchema, targetByTypeName);
+    if (plan.coreSchema() != null) {
+      // A standalone scope's targets are checked against each other while core is merged from
+      // them. A module scope has a core of its own, so its targets are checked against that.
+      schemas.forEach(
+          (module, schema) -> SchemaMerge.requireCoreCovers(module, coreSchema, schema));
+    }
 
     TypeRegistry registry = TypeRegistry.acrossPackages(CORE_PACKAGE, packageByTypeName);
     emit(SchemaPartition.core(coreSchema), registry.emittingInto(CORE_PACKAGE), null, null);

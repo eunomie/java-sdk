@@ -47,7 +47,9 @@ public record GenerationPlan(Path coreSchema, List<Target> targets) {
   public static GenerationPlan read(Path planDirectory) throws IOException {
     Path coreSchema = planDirectory.resolve(CORE).resolve(SCHEMA);
     if (!Files.isRegularFile(coreSchema)) {
-      throw new IOException("generation plan has no core schema at " + coreSchema);
+      // A standalone scope has no module-facing schema, so it supplies none and core is merged
+      // from the targets instead.
+      coreSchema = null;
     }
     List<Target> targets = new ArrayList<>();
     try (Stream<Path> entries = Files.list(planDirectory)) {
