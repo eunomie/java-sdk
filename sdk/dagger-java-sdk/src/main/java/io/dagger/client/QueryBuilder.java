@@ -29,7 +29,15 @@ import java.util.stream.StreamSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class QueryBuilder {
+/**
+ * Builds and executes one GraphQL selection chain.
+ *
+ * <p>Public because generated code lives in packages of its own — one {@code
+ * io.dagger.client.modules.<target>} per target — and every generated type is built on, and chains
+ * through, a query builder. Not a user-facing API: module and client code goes through the
+ * generated types.
+ */
+public final class QueryBuilder {
 
   static final Logger LOG = LoggerFactory.getLogger(QueryBuilder.class);
 
@@ -38,7 +46,7 @@ class QueryBuilder {
   private final List<QueryPart> leaves;
   private final String inlineFragmentType;
 
-  QueryBuilder(GraphQLClient client) {
+  public QueryBuilder(GraphQLClient client) {
     this(client, new LinkedList<>(), new ArrayList<>(), null);
   }
 
@@ -61,11 +69,16 @@ class QueryBuilder {
     this.inlineFragmentType = inlineFragmentType;
   }
 
-  QueryBuilder chain(String operation) {
+  /** The session this builder talks to, and the identity of that session. */
+  public GraphQLClient client() {
+    return this.client;
+  }
+
+  public QueryBuilder chain(String operation) {
     return chain(operation, Arguments.noArgs());
   }
 
-  QueryBuilder chain(String operation, Arguments arguments) {
+  public QueryBuilder chain(String operation, Arguments arguments) {
     if (leaves != null && !leaves.isEmpty()) {
       throw new IllegalStateException("A new field cannot be chained");
     }
@@ -75,7 +88,7 @@ class QueryBuilder {
     return new QueryBuilder(client, list, new ArrayList<>(), inlineFragmentType);
   }
 
-  QueryBuilder chain(String operation, List<String> leaves) {
+  public QueryBuilder chain(String operation, List<String> leaves) {
     if (!this.leaves.isEmpty()) {
       throw new IllegalStateException("A new field cannot be chained");
     }
@@ -85,7 +98,7 @@ class QueryBuilder {
     return new QueryBuilder(client, list, leaves, inlineFragmentType);
   }
 
-  QueryBuilder chain(List<String> leaves) {
+  public QueryBuilder chain(List<String> leaves) {
     if (!this.leaves.isEmpty()) {
       throw new IllegalStateException("A new field cannot be chained");
     }
@@ -99,7 +112,7 @@ class QueryBuilder {
    *
    * <p>This produces queries like: {@code node(id: "...") { ... on Container { field { ... } } }}
    */
-  QueryBuilder chainNode(String typeName, Object id) {
+  public QueryBuilder chainNode(String typeName, Object id) {
     Deque<QueryPart> list = new LinkedList<>();
     list.addAll(this.parts);
     // Unwrap Scalar (e.g. ID) to its inner value — Scalar doesn't override toString()
@@ -165,11 +178,11 @@ class QueryBuilder {
    * @throws InterruptedException
    * @throws DaggerQueryException
    */
-  void executeQuery() throws ExecutionException, InterruptedException, DaggerQueryException {
+  public void executeQuery() throws ExecutionException, InterruptedException, DaggerQueryException {
     executeQuery(buildQuery());
   }
 
-  <T> T executeQuery(Class<T> klass)
+  public <T> T executeQuery(Class<T> klass)
       throws ExecutionException, InterruptedException, DaggerQueryException {
     List<String> pathElts =
         StreamSupport.stream(
@@ -214,7 +227,7 @@ class QueryBuilder {
    * this cannot stay lazy. What comes back is lazy again: the caller wraps it in a normal client
    * object.
    */
-  QueryBuilder executeNullableObjectQuery(String graphqlTypeName)
+  public QueryBuilder executeNullableObjectQuery(String graphqlTypeName)
       throws ExecutionException, InterruptedException, DaggerQueryException {
     // chain(String), not chain(List): only parts are walked when reading the response back.
     String id = chain("id").executeQuery(String.class);
@@ -224,7 +237,7 @@ class QueryBuilder {
     return new QueryBuilder(this.client).chainNode(graphqlTypeName, id);
   }
 
-  <T> List<T> executeListQuery(Class<T> klass)
+  public <T> List<T> executeListQuery(Class<T> klass)
       throws ExecutionException, InterruptedException, DaggerQueryException {
     List<String> pathElts =
         StreamSupport.stream(
@@ -268,7 +281,7 @@ class QueryBuilder {
    *
    * @param graphqlTypeName the GraphQL type name for inline fragment resolution
    */
-  List<QueryBuilder> executeObjectListQuery(String graphqlTypeName)
+  public List<QueryBuilder> executeObjectListQuery(String graphqlTypeName)
       throws ExecutionException, InterruptedException, DaggerQueryException {
     List<String> pathElts =
         StreamSupport.stream(

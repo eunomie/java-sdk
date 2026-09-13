@@ -34,7 +34,7 @@ public class Arguments {
     return new Builder();
   }
 
-  Arguments merge(Arguments other) {
+  public Arguments merge(Arguments other) {
     HashMap<String, Object> newMap = new HashMap<>(this.args);
     newMap.putAll(other.args);
     return new Arguments(newMap);

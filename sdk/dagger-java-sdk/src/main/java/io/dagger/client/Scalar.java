@@ -8,7 +8,7 @@ public class Scalar<T> {
     this.value = value;
   }
 
-  T convert() {
+  public T convert() {
     return value;
   }
 
