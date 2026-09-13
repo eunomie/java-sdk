@@ -81,6 +81,7 @@
                 <configuration>
                     <version>${daggerengine.version}</version>
                     <introspectionJson>${daggerengine.schema}</introspectionJson>
+                    <plan>${daggerengine.plan}</plan>
                 </configuration>
                 <executions>
                     <execution>

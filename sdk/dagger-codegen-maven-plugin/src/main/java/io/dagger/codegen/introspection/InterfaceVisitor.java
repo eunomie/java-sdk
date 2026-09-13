@@ -117,6 +117,7 @@ class InterfaceVisitor extends AbstractVisitor {
     // Constructor
     MethodSpec constructor =
         MethodSpec.constructorBuilder()
+            .addModifiers(Modifier.PUBLIC)
             .addParameter(registry().runtime("QueryBuilder"), "queryBuilder")
             .addCode("this.queryBuilder = queryBuilder;")
             .build();

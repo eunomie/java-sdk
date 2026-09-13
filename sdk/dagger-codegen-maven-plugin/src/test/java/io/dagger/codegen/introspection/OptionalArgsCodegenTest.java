@@ -69,6 +69,8 @@ class OptionalArgsCodegenTest {
         new ObjectVisitor(
                 schema,
                 TypeRegistry.singlePackage("io.dagger.client"),
+                null,
+                null,
                 Path.of("."),
                 StandardCharsets.UTF_8)
             .generateType(query);

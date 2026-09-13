@@ -199,7 +199,8 @@ class NullableObjectCodegenTest {
         sources.put(
             qualifiedName,
             javaFile(
-                new ObjectVisitor(schema, REGISTRY, Path.of("."), StandardCharsets.UTF_8)
+                new ObjectVisitor(
+                        schema, REGISTRY, null, null, Path.of("."), StandardCharsets.UTF_8)
                     .generateType(type)));
       }
     }

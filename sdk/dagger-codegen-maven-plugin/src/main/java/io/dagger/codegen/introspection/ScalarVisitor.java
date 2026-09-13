@@ -33,6 +33,7 @@ class ScalarVisitor extends AbstractVisitor {
 
     MethodSpec constructor =
         MethodSpec.constructorBuilder()
+            .addModifiers(Modifier.PUBLIC)
             .addParameter(ClassName.get(String.class), "value")
             .addStatement("super(value)")
             .build();
