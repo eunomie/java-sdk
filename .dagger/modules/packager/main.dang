@@ -44,20 +44,28 @@ type Packager {
       .withMountedCache("/root/.m2", mavenRepo, sharing: CacheSharingMode.LOCKED)
       .withDirectory("/dagger-io", sdkSource(ws))
       .withWorkdir("/dagger-io")
-      .withExec(["mvn", "--projects", "dagger-codegen-maven-plugin", "--also-make", "install", "-T1C", "-Dmaven.test.skip=true", "-Dfmt.skip=true", "-Dproject.build.outputTimestamp=2024-01-01T00:00:00Z", "--no-transfer-progress"])
-      # Export the two artifacts this module publishes, named one by one rather
-      # than copying io/dagger wholesale. The local repository is shared with
-      # module generation, which installs io/dagger/dagger-java-sdk/<module> and
+      # Install and export in one exec, because the mount is LOCKED per exec and
+      # not across a chain of them. Split in two, the lock is released in
+      # between, and packager:unit-tests — which runs concurrently under one
+      # `dagger check` and installs the same plugin without the fixed output
+      # timestamp — can overwrite the jar in the shared repository before the
+      # export copies it. What then landed under prebuilt/ carried wall-clock
+      # entry timestamps and never matched the committed bytes, so this check
+      # failed on a race rather than on anything in the diff.
+      #
+      # The export names the two artifacts this module publishes rather than
+      # copying io/dagger wholesale. The local repository is shared with module
+      # generation, which installs io/dagger/dagger-java-sdk/<module> and
       # io/dagger/dagger-java-annotation-processor/<module> into it under a
       # per-module version; a wholesale copy sweeps those in too, so what landed
       # under prebuilt/ depended on whether a generation had run first.
       #
-      # Then strip Maven's install-time timestamps so the committed repo is
+      # It then strips Maven's install-time timestamps so the committed repo is
       # byte-reproducible: drop the comment lines from _remote.repositories
       # (keeping the ">=" local-install markers resolution needs) and pin
       # <lastUpdated>. Otherwise every generate re-timestamps these files and
       # the check reports perpetual drift.
-      .withExec(["sh", "-c", "set -e; rm -rf /out; mkdir -p /out/io/dagger; cd /root/.m2/repository/io/dagger; cp -r dagger-codegen-maven-plugin dagger-sdk-parent maven-metadata-local.xml /out/io/dagger/; find /out -name _remote.repositories -exec sed -i '/>=/!d' {} ';'; find /out -name maven-metadata-local.xml -exec sed -i 's|<lastUpdated>[0-9]*</lastUpdated>|<lastUpdated>20240101000000</lastUpdated>|' {} ';'"])
+      .withExec(["sh", "-c", "set -e; mvn --projects dagger-codegen-maven-plugin --also-make install -T1C -Dmaven.test.skip=true -Dfmt.skip=true -Dproject.build.outputTimestamp=2024-01-01T00:00:00Z --no-transfer-progress; rm -rf /out; mkdir -p /out/io/dagger; cd /root/.m2/repository/io/dagger; cp -r dagger-codegen-maven-plugin dagger-sdk-parent maven-metadata-local.xml /out/io/dagger/; find /out -name _remote.repositories -exec sed -i '/>=/!d' {} ';'; find /out -name maven-metadata-local.xml -exec sed -i 's|<lastUpdated>[0-9]*</lastUpdated>|<lastUpdated>20240101000000</lastUpdated>|' {} ';'"])
       .directory("/out")
   }
 

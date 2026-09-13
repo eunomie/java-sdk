@@ -653,10 +653,11 @@ which Maven does not care about.
 
 **The packager copies whole directories out of a shared Maven cache volume.**
 `codegenPluginRepo` in `.dagger/modules/packager/main.dang` exports the
-committed plugin repository with `cp -r` of three names, so anything another
-run left beside them under `io/dagger` is swept into the committed tree. That is
-what makes `packager:generate` sensitive to the history of a cache volume that
-outlives any one job. Copying only the files it publishes would make it immune.
+committed plugin repository with `cp -r` of three names, so anything another run
+left beside them under `io/dagger` is swept into the committed tree. Copying
+only the files it publishes would make it immune to the volume's history. The
+race that made the same export non-deterministic under one `dagger check` is
+fixed here; this narrower sensitivity is not.
 
 **The generator still has a single-schema path.** `-Ddaggerengine.schema=<file>`
 is exactly a plan with only a core entry, so the branch in `DaggerCodegenMojo`
@@ -730,9 +731,9 @@ reviewer who wants the halves separately can take the cut at patch 12 as given.
 ## The patch series
 
 Built with Stacked Git on `24f430a529a5aa07b0d3ca64417d8f460394f004`. Every
-patch carries `Signed-off-by: Yves Brissaud <yves@dagger.io>`. Patches 1 to 12
+patch carries `Signed-off-by: Yves Brissaud <yves@dagger.io>`. Patches 1 to 13
 are the code generator and the runtime library, and build and test with `mvn`
-alone; 13 onwards are the generation driver, the standalone scope, the checks
+alone; 14 onwards are the generation driver, the standalone scope, the checks
 and the documentation.
 
 1. **`hack/designs: spec unified client generation`** — this document.
@@ -744,58 +745,73 @@ and the documentation.
    `Field` learn which module the engine attributes a type or field to. The
    argument arrives JSON-encoded, so the quotation marks are part of the value.
 4. **`codegen: partition a schema into core and one module`** — `SchemaPartition`.
-   Core keeps every unowned type with all its fields; a client keeps only the
-   types its module owns. An empty client partition is refused, which is also
-   how a target with no runtime SDK is caught.
-5. **`codegen: map a module name to a Java package, and refuse a set it cannot
+   Core keeps every unowned type with every module-owned field stripped; a
+   client keeps the types its module owns plus the fields that module
+   contributes to core types. An empty client partition is refused, which is
+   also how a target with no runtime SDK is caught.
+5. **`codegen: read a client's entry points off its schema`** —
+   `ClientEntryPoint`. A contributed field has no class of its own, so it
+   becomes a static method on the module's root type, carrying the core receiver
+   it was reached through. The root type is read off the schema rather than
+   derived from the module name, which would give `E2e` where the engine says
+   `E2E`.
+6. **`codegen: map a module name to a Java package, and refuse a set it cannot
    separate`** — `ModulePackage`. The comparison is case-insensitive, because a
    case-sensitive filesystem is not the only kind these packages are written to.
-6. **`codegen: resolve type references through a registry`** — `TypeRegistry`,
+7. **`codegen: resolve type references through a registry`** — `TypeRegistry`,
    threaded through every visitor and `CodeWriter`. Behaviour-preserving, and
    measured: generating from a real `v1.0.0-beta.13` schema before and after
    differs in exactly one way across 114 files, `executeQuery(java.lang.String.class)`
    becoming `executeQuery(String.class)`, because a `ClassName` lets javapoet
    elide the implicit `java.lang` import.
-7. **`sdk: make the query transport public API`** — generated code outside
+8. **`sdk: make the query transport public API`** — generated code outside
    `io.dagger.client` has to be able to build a query.
-8. **`sdk: serve a target on first use`** — `ModuleTarget` and
+9. **`sdk: serve a target on first use`** — `ModuleTarget` and
    `ModuleTargets.serve`, which takes the descriptor its caller holds rather
    than looking one up.
-9. **`sdk: open a session when there is none`** — `CLISession`, the `Connection`
-   fallback, `--load-workspace-modules` wired through, and a `Dagger.dag()` that
-   two threads cannot race into starting two engines.
-10. **`codegen: generate every package a plan names in one pass`** —
+10. **`sdk: open a session when there is none`** — `CLISession`, the `Connection`
+    fallback, `--load-workspace-modules` wired through, and a `Dagger.dag()` that
+    two threads cannot race into starting two engines.
+11. **`codegen: generate every package a plan names in one pass`** —
     `GenerationPlan`, `Generator`, the `-Ddagger.plan` parameter, and the
     descriptor a plan entry carries emitted as a constant its entry points
     serve. Generated constructors become public here: package-private was
     correct only while everything was one package.
-11. **`codegen: merge core from the targets when a scope has none`** —
+12. **`codegen: take core from the targets when a scope has none`** —
     `SchemaMerge`, and the refusal when targets disagree.
-12. **`codegen: add a client-pom goal to register generated clients`** — the
+13. **`codegen: add a client-pom goal to register generated clients`** — the
     goal that writes one marked profile into a pom the SDK does not own. It
     splices text rather than re-serializing, so nothing else in the file moves.
-13. **`prebuilt: rebuild the codegen plugin`** — before the first patch that
+14. **`prebuilt: rebuild the codegen plugin`** — before the first patch that
     generates with it. Generation seeds the local Maven repository from
     `prebuilt/m2` whenever it exists and never compiles the plugin sources in
     that case, so a driver change without this would run the old generator.
-14. **`java-sdk: generate one package per target`** — `codegen.dang`, and
+15. **`java-sdk: generate one package per target`** — `codegen.dang`, and
     `mod.dang` driving it. The generated layout changes here, and the checks
     that cover the move land with it.
-15. **`java-sdk: generate standalone client scopes`** — `client.dang`, the
-    routing in `main.dang`, the descriptors, the pom registration, and the two
-    checks that matter most: that a standalone scope generates, and that the
-    package it generates has the same digest as the module scope's.
-16. **`README: document standalone clients`**.
+16. **`java-sdk: generate standalone client scopes`** — `client.dang`, the
+    routing in `main.dang`, the pom registration, and the two checks that matter
+    most: that a standalone scope generates, and that the package it generates
+    has the same digest as the module scope's.
+17. **`README: document standalone clients`**.
+18. **`hack/designs: archive the unified-client-generation design`** — this
+    document moves under `done/` once the series is complete.
+19. **`packager: hold the Maven lock across install and export`** — the `LOCKED`
+    cache mount is per-exec, so installing the plugin and exporting it as two
+    execs let a concurrent check overwrite the jar in between. One exec closes
+    it.
 
-Three things differ from what this document first planned, and the reasons are
+Four things differ from what this document first planned, and the reasons are
 worth keeping. The formatter patch was not planned; it was added because the
 drift made every other patch noisy. `codegen.dang` and the per-target layout
 landed as one patch rather than two, because the intermediate — a driver
 refactor that changes no output — does not exist once the plan format itself is
-what changes. And the plan's last patch, installing the `e2e` module in
-`dagger.toml` so its checks run against the released engine, was dropped: the
-finding behind it is real and recorded below, but acting on it changes what CI
-runs, which is not this feature's business.
+what changes. Patch 5 was not planned at all: it exists because the accessor was
+moved off core, which this document originally proposed to keep. And the plan's
+last patch, installing the `e2e` module in `dagger.toml` so its checks run
+against the released engine, was dropped: the finding behind it is real and
+recorded below, but acting on it changes what CI runs, which is not this
+feature's business.
 
 ## What was taken from the abandoned attempt, and what was not
 
@@ -904,6 +920,48 @@ rather than eager and per session.
   was green on `24f430a5` itself, so the environment does reproduce a correctly
   committed jar. A cache-busting re-run then passed in 25.3s.
 
-  The remaining hardening is recorded above under residual work: the packager
-  copies whole directories out of that shared volume rather than the files it
-  publishes, which is what makes it sensitive to the volume's history at all.
+  A further push, of documentation alone, then failed the same check again — on
+  a tree whose code had not changed and where that check had just passed. That
+  ruled out the diff entirely and pointed at a race, which the module's own code
+  shows: the cache mount is LOCKED per exec and not across a chain of them, and
+  the export ran in a second exec after the install released the lock. Under one
+  `dagger check` the unit-test check installs the same plugin concurrently and
+  without the fixed output timestamp, so it can overwrite the jar between the
+  two. The last patch in this series puts the install and the export in one
+  exec. The narrower sensitivity — copying whole directories rather than the
+  published files — is recorded above as work left for later.
+
+- **A client is autonomous, done.** A refinement after the pull request opened:
+  a client should be reached by importing its own package, not by an accessor
+  added to the global `dag()`, and a client should ask the engine to serve its
+  module — inside a module too, so that no `[[dependencies]]` entry is what
+  makes it work.
+
+  The first half changed the partition. Core now has every module-owned field
+  stripped rather than kept, and each such field is re-homed onto the target's
+  root type as a static method taking the receiver it was reached through. Core
+  no longer names a client package at all, which is what makes core itself
+  independent of the target set — something this document had explicitly
+  conceded it would not be.
+
+  The second half deleted a layer rather than adding one. The `ServiceLoader`
+  machinery — `ModuleTargetProvider`, a `META-INF/services` file, a name-keyed
+  registry, and the "two providers disagree about one target" failure it needed
+  to defend against — existed only because the entry point lived in core, and
+  core could not name a client package, so it had to find a descriptor by name
+  at run time. With the entry point inside the client package, that package owns
+  its target and holds the descriptor as a constant. Removing it also removed a
+  migration problem: a services file needs a resource directory declared in the
+  module's pom, and this SDK does not rewrite the pom of a module that already
+  exists.
+
+  Whether a target is served became a per-target decision carried in the plan.
+  A per-scope one was tried first and was wrong for a reason the checks made
+  plain: it would have put a descriptor in a standalone package and none in the
+  module package for the same target, so `clientsAreOneArtifactCheck` — the
+  check that states this whole design's premise — could not have held. Per
+  target, a git target is served by the client in both scopes and its package is
+  byte-identical on both sides today. A workspace path is still served by the
+  engine inside a module, because a module runtime has no filesystem session
+  attachable to resolve one against. That is the last asymmetry, it is an engine
+  limitation, and closing it is `servesWorkspacePaths: true` in `modulePlan`.
