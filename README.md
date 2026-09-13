@@ -17,8 +17,8 @@ time** — the runtime just builds and packages the module.
 > [!IMPORTANT]
 > This SDK implements the module-scope interface from
 > [dagger/dagger#13992](https://github.com/dagger/dagger/pull/13992) and needs an
-> engine that has it. On the released engine (`v1.0.0-beta.11`) the module loads
-> but every call into it fails.
+> engine that has it. That change merged, and `v1.0.0-beta.13` carries it; on an
+> earlier engine the module loads but every call into it fails.
 >
 > It writes module manifests through
 > [`github.com/dagger/sdk-helpers`](https://github.com/dagger/sdk-helpers), the
@@ -114,13 +114,103 @@ Module dependencies are replaced by generated module clients:
 dagger module client add java <module-ref>
 ```
 
+Each client's types are generated into a package of their own,
+`io.dagger.client.modules.<client>`, from that client's own schema and nothing
+else. The way in is a static method on the client's own root type, so one import
+is the whole of the integration:
+
+```java
+import static io.dagger.client.modules.sdkhelpers.SdkHelpers.sdkHelpers;
+
+sdkHelpers().moduleManifest().generate();
+```
+
+The core client is not extended with an accessor for it. A client package is
+self-contained: it reaches core types where they live, and nothing in core names
+it. Pass a session explicitly when you have one — `sdkHelpers(dag)` — or let the
+no-argument form use the ambient one.
+
 In a module scope the client set becomes the module's dependency set. Each
 client is recorded in the manifest the module has — `dagger-module.toml`, or the
-`dagger.json` of a pre-1.0 module — and its types are part of the generated
-bindings; a client that is removed is dropped from both.
+`dagger.json` of a pre-1.0 module — and a client that is removed is dropped from
+both the manifest and the bindings.
 
-Standalone clients — in a scope that has no Java module — are not generated yet.
-Adding one is refused and the workspace is left unchanged.
+> [!WARNING]
+> A client's types moved out of `io.dagger.client` in this release, and so did
+> the way in. `dag().sdkHelpers()` becomes `sdkHelpers()` after a static import
+> of `io.dagger.client.modules.sdkhelpers.SdkHelpers.sdkHelpers`, and each type
+> is imported from `io.dagger.client.modules.<client>` rather than from
+> `io.dagger.client`. The `<Client>Arguments` holder moves with the method, onto
+> the client's root type.
+
+## Standalone clients
+
+A Maven project that is no Dagger module can call modules too. Run the same
+command inside it:
+
+```sh
+cd my-java-app          # any directory with a pom.xml
+dagger module client add java github.com/dagger/sdk-helpers@v1.0.2
+dagger generate
+```
+
+`dagger generate` writes the client tree under `dagger/`, all of it SDK-owned
+and regenerated whole:
+
+```
+my-java-app/
+  pom.xml                                                     # gains one profile, see below
+  dagger/src/main/java/io/dagger/client/**                    # the SDK runtime and the core API
+  dagger/src/main/java/io/dagger/client/modules/<client>/**   # one package per client
+```
+
+The bindings under `io.dagger.client.modules.<client>` are the same files a
+module gets for the same client. Only what surrounds them differs.
+
+Your own code then reads exactly as a module's does:
+
+```java
+import static io.dagger.client.modules.sdkhelpers.SdkHelpers.sdkHelpers;
+
+public class App {
+  public static void main(String[] args) throws Exception {
+    System.out.println(sdkHelpers().moduleManifest().generate());
+  }
+}
+```
+
+Run it with a `dagger` binary on `PATH` and no wrapper command:
+
+```sh
+mvn package
+java -jar target/my-java-app-1.0-SNAPSHOT.jar
+```
+
+There is no session to join, so the SDK starts one with `dagger session`, and
+each client asks the engine to load its module the first time your code reaches
+for it. Set `_EXPERIMENTAL_DAGGER_CLI_BIN` to point at a specific binary. The
+SDK does not download a CLI; install one first.
+
+The generated code needs Java 17, so the project's `maven.compiler.release`
+(or `maven.compiler.source` and `maven.compiler.target`) has to be 17 or later.
+
+### The one thing written into your pom
+
+Your `pom.xml` is yours, so `dagger generate` adds exactly one element to it: a
+profile with the id `dagger-clients`, carrying a comment that says what wrote
+it. The profile adds `dagger/src/main/java` as a source root, along with the SDK's
+own run-time dependencies. It activates on the presence of the generated tree, so deleting
+`dagger/` makes it inert and deleting the profile removes the integration.
+
+Generation refuses to touch a `dagger-clients` profile that does not carry that
+comment, on the assumption that you wrote it.
+
+### What a client is pinned to
+
+A client added at a git ref records the commit it resolved to, and the generated
+code asks for that commit. A client that is a path in your workspace records the
+path, so a jar built from it only works inside that workspace; a git client is
+the form that travels.
 
 > [!WARNING]
 > The client set is the *whole* dependency set. A module that recorded
@@ -131,9 +221,7 @@ Adding one is refused and the workspace is left unchanged.
 > dagger module client add java <module-ref>
 > ```
 >
-> Then check that each one landed in `dagger.toml` before you generate. On the
-> `sdk-ux-module-max` engine builds this SDK currently needs,
-> `dagger module client add` reports success and writes nothing.
+> Then check that each one landed in `dagger.toml` before you generate.
 
 ## Pre-1.0 modules
 
