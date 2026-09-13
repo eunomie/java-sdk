@@ -7,8 +7,8 @@ import javax.lang.model.element.Modifier;
 
 public class EnumVisitor extends AbstractVisitor {
 
-  public EnumVisitor(Schema schema, Path targetDirectory, Charset encoding) {
-    super(schema, targetDirectory, encoding);
+  public EnumVisitor(Schema schema, TypeRegistry registry, Path targetDirectory, Charset encoding) {
+    super(schema, registry, targetDirectory, encoding);
   }
 
   @Override

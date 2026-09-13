@@ -15,8 +15,9 @@ import javax.lang.model.element.Modifier;
  * when loading from ID or returning from fields.
  */
 class InterfaceVisitor extends AbstractVisitor {
-  public InterfaceVisitor(Schema schema, Path targetDirectory, Charset encoding) {
-    super(schema, targetDirectory, encoding);
+  public InterfaceVisitor(
+      Schema schema, TypeRegistry registry, Path targetDirectory, Charset encoding) {
+    super(schema, registry, targetDirectory, encoding);
   }
 
   @Override
@@ -42,7 +43,7 @@ class InterfaceVisitor extends AbstractVisitor {
     // Arguments.Builder overloads.
     if (type.providesId()) {
       interfaceBuilder.addSuperinterface(
-          ParameterizedTypeName.get(ClassName.bestGuess("IDAble"), ClassName.bestGuess("ID")));
+          ParameterizedTypeName.get(registry().runtime("IDAble"), registry().forType("ID")));
     }
 
     if (type.getFields() != null) {
@@ -84,7 +85,7 @@ class InterfaceVisitor extends AbstractVisitor {
           methodBuilder
               .addException(InterruptedException.class)
               .addException(ExecutionException.class)
-              .addException(ClassName.get("io.dagger.client.exception", "DaggerQueryException"));
+              .addException(registry().runtime("exception", "DaggerQueryException"));
         }
 
         if (field.isDeprecated()) {
@@ -101,7 +102,7 @@ class InterfaceVisitor extends AbstractVisitor {
   /** Generates the FooClient class that implements the Foo interface via query building. */
   TypeSpec generateClientType(Type type) {
     String clientName = Helpers.formatName(type) + "Client";
-    ClassName interfaceName = ClassName.bestGuess(Helpers.formatName(type));
+    ClassName interfaceName = registry().forType(type.getName());
 
     TypeSpec.Builder classBuilder =
         TypeSpec.classBuilder(clientName)
@@ -110,13 +111,13 @@ class InterfaceVisitor extends AbstractVisitor {
             .addSuperinterface(interfaceName)
             .addField(
                 FieldSpec.builder(
-                        ClassName.bestGuess("QueryBuilder"), "queryBuilder", Modifier.PRIVATE)
+                        registry().runtime("QueryBuilder"), "queryBuilder", Modifier.PRIVATE)
                     .build());
 
     // Constructor
     MethodSpec constructor =
         MethodSpec.constructorBuilder()
-            .addParameter(ClassName.bestGuess("QueryBuilder"), "queryBuilder")
+            .addParameter(registry().runtime("QueryBuilder"), "queryBuilder")
             .addCode("this.queryBuilder = queryBuilder;")
             .build();
     classBuilder.addMethod(constructor);
@@ -181,66 +182,69 @@ class InterfaceVisitor extends AbstractVisitor {
 
     if (field.getTypeRef().isListOfObject()) {
       String objName = field.getTypeRef().getListElementType().getName();
-      String clientClassName =
-          field.getTypeRef().getListElementType().isInterface() ? objName + "Client" : objName;
+      ClassName clientClass =
+          field.getTypeRef().getListElementType().isInterface()
+              ? registry().forInterfaceClient(objName)
+              : registry().forType(objName);
       fieldMethodBuilder.addStatement(
           "nextQueryBuilder = nextQueryBuilder.chain(List.of($S))", "id");
       fieldMethodBuilder.addStatement(
           "List<QueryBuilder> builders = nextQueryBuilder.executeObjectListQuery($S)", objName);
       fieldMethodBuilder.addStatement(
-          "return builders.stream().map(qb -> new $L(qb)).toList()", clientClassName);
+          "return builders.stream().map(qb -> new $T(qb)).toList()", clientClass);
       fieldMethodBuilder
           .addException(InterruptedException.class)
           .addException(ExecutionException.class)
-          .addException(ClassName.get("io.dagger.client.exception", "DaggerQueryException"));
+          .addException(registry().runtime("exception", "DaggerQueryException"));
     } else if (field.getTypeRef().isList()) {
       fieldMethodBuilder.addStatement(
-          "return nextQueryBuilder.executeListQuery($L.class)",
-          field.getTypeRef().getListElementType().getName());
+          "return nextQueryBuilder.executeListQuery($T.class)",
+          field.getTypeRef().getListElementType().formatOutput(registry()));
       fieldMethodBuilder
           .addException(InterruptedException.class)
           .addException(ExecutionException.class)
-          .addException(ClassName.get("io.dagger.client.exception", "DaggerQueryException"));
+          .addException(registry().runtime("exception", "DaggerQueryException"));
     } else if (Helpers.isIdToConvert(field)) {
       fieldMethodBuilder.addStatement("nextQueryBuilder.executeQuery()");
       fieldMethodBuilder.addStatement("return this");
       fieldMethodBuilder
           .addException(InterruptedException.class)
           .addException(ExecutionException.class)
-          .addException(ClassName.get("io.dagger.client.exception", "DaggerQueryException"));
+          .addException(registry().runtime("exception", "DaggerQueryException"));
     } else if (nullableObject) {
       String graphqlTypeName = field.getTypeRef().getTypeName();
-      String clientClassName =
+      TypeName clientClass =
           field.getTypeRef().isInterface()
-              ? graphqlTypeName + "Client"
-              : objectReturnType.toString();
+              ? registry().forInterfaceClient(graphqlTypeName)
+              : objectReturnType;
       fieldMethodBuilder.addStatement(
           "QueryBuilder objectQueryBuilder = nextQueryBuilder.executeNullableObjectQuery($S)",
           graphqlTypeName);
       fieldMethodBuilder.addStatement(
-          "return Optional.ofNullable(objectQueryBuilder).map(qb -> new $L(qb))",
-          ClassName.bestGuess(clientClassName));
+          "return Optional.ofNullable(objectQueryBuilder).map(qb -> new $T(qb))", clientClass);
       fieldMethodBuilder
           .addException(InterruptedException.class)
           .addException(ExecutionException.class)
-          .addException(ClassName.get("io.dagger.client.exception", "DaggerQueryException"));
+          .addException(registry().runtime("exception", "DaggerQueryException"));
     } else if (field.getTypeRef().isObjectOrInterface()) {
       // For interface return types, instantiate the client class
       CodeBlock instantiation =
           field.getTypeRef().isInterface()
-              ? CodeBlock.of("new $LClient(nextQueryBuilder)", field.getTypeRef().getTypeName())
-              : CodeBlock.of("new $L(nextQueryBuilder)", objectReturnType);
+              ? CodeBlock.of(
+                  "new $T(nextQueryBuilder)",
+                  registry().forInterfaceClient(field.getTypeRef().getTypeName()))
+              : CodeBlock.of("new $T(nextQueryBuilder)", objectReturnType);
       if (presentObject) {
         fieldMethodBuilder.addStatement("return $T.of($L)", Optional.class, instantiation);
       } else {
         fieldMethodBuilder.addStatement("return $L", instantiation);
       }
     } else {
-      fieldMethodBuilder.addStatement("return nextQueryBuilder.executeQuery($L.class)", returnType);
+      fieldMethodBuilder.addStatement("return nextQueryBuilder.executeQuery($T.class)", returnType);
       fieldMethodBuilder
           .addException(InterruptedException.class)
           .addException(ExecutionException.class)
-          .addException(ClassName.get("io.dagger.client.exception", "DaggerQueryException"));
+          .addException(registry().runtime("exception", "DaggerQueryException"));
     }
 
     if (field.isDeprecated()) {
@@ -252,19 +256,19 @@ class InterfaceVisitor extends AbstractVisitor {
 
   private TypeName resolveReturnType(Field field) {
     if ("id".equals(field.getName())) {
-      return field.getTypeRef().formatOutput();
+      return field.getTypeRef().formatOutput(registry());
     }
     if (Helpers.isIdToConvert(field)) {
       // sync-like: return the parent object type
-      return ClassName.bestGuess(Helpers.formatName(field.getParentObject()));
+      return registry().forType(field.getParentObject().getName());
     }
     String expectedType = field.getExpectedType();
-    return field.getTypeRef().formatInput(expectedType);
+    return field.getTypeRef().formatInput(registry(), expectedType);
   }
 
   private TypeName resolveArgType(InputObject arg) {
     String expectedType = arg.getExpectedType();
-    return arg.getType().formatInput(expectedType);
+    return arg.getType().formatInput(registry(), expectedType);
   }
 
   private boolean isNullableObject(Field field) {

@@ -65,18 +65,15 @@ public class Helpers {
           "super",
           "while");
 
-  static ClassName convertScalarToObject(String typeName, String expectedType) {
+  static ClassName convertScalarToObject(
+      TypeRegistry registry, String typeName, String expectedType) {
     if (expectedType != null && !expectedType.isEmpty()) {
-      return ClassName.bestGuess(expectedType);
+      return registry.forType(expectedType);
     }
     if (typeName.endsWith("ID") && typeName.length() > 2) {
-      return ClassName.bestGuess(typeName.substring(0, typeName.length() - 2));
+      return registry.forType(typeName.substring(0, typeName.length() - 2));
     }
-    return ClassName.bestGuess(typeName);
-  }
-
-  static ClassName convertScalarToObject(String typeName) {
-    return convertScalarToObject(typeName, null);
+    return registry.forType(typeName);
   }
 
   /**
@@ -128,10 +125,15 @@ public class Helpers {
   }
 
   static String formatName(Type type) {
-    if ("Query".equals(type.getName())) {
+    return formatName(type.getName());
+  }
+
+  /** The Java simple name generated for a GraphQL type name. */
+  static String formatName(String graphqlName) {
+    if ("Query".equals(graphqlName)) {
       return "Client";
     } else {
-      return capitalize(type.getName());
+      return capitalize(graphqlName);
     }
   }
 

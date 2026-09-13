@@ -9,8 +9,9 @@ import javax.lang.model.element.Modifier;
 
 class InputVisitor extends AbstractVisitor {
 
-  public InputVisitor(Schema schema, Path targetDirectory, Charset encoding) {
-    super(schema, targetDirectory, encoding);
+  public InputVisitor(
+      Schema schema, TypeRegistry registry, Path targetDirectory, Charset encoding) {
+    super(schema, registry, targetDirectory, encoding);
   }
 
   @Override
@@ -19,24 +20,26 @@ class InputVisitor extends AbstractVisitor {
         TypeSpec.classBuilder(Helpers.formatName(type))
             .addJavadoc(type.getDescription() != null ? type.getDescription() : "")
             .addModifiers(Modifier.PUBLIC)
-            .addSuperinterface(ClassName.bestGuess("InputValue"));
+            .addSuperinterface(registry().runtime("InputValue"));
 
     for (InputObject inputObject : type.getInputFields()) {
 
       classBuilder.addField(
           FieldSpec.builder(
-                  inputObject.getType().formatInput(), inputObject.getName(), Modifier.PRIVATE)
+                  inputObject.getType().formatInput(registry()),
+                  inputObject.getName(),
+                  Modifier.PRIVATE)
               .build());
 
       classBuilder.addMethod(
-          Helpers.getter(inputObject.getName(), inputObject.getType().formatInput()));
+          Helpers.getter(inputObject.getName(), inputObject.getType().formatInput(registry())));
       classBuilder.addMethod(
-          Helpers.setter(inputObject.getName(), inputObject.getType().formatOutput()));
+          Helpers.setter(inputObject.getName(), inputObject.getType().formatOutput(registry())));
       classBuilder.addMethod(
           Helpers.withSetter(
               inputObject,
-              inputObject.getType().formatInput(),
-              ClassName.bestGuess(Helpers.formatName(type))));
+              inputObject.getType().formatInput(registry()),
+              registry().forType(type.getName())));
     }
 
     MethodSpec.Builder toMapMethod =

@@ -101,22 +101,22 @@ public class TypeRef {
     return ref;
   }
 
-  public TypeName formatOutput() {
-    return formatType(false, null);
+  public TypeName formatOutput(TypeRegistry registry) {
+    return formatType(registry, false, null);
   }
 
-  public TypeName formatInput() {
-    return formatType(true, null);
+  public TypeName formatInput(TypeRegistry registry) {
+    return formatType(registry, true, null);
   }
 
   /** Format as input type, using the given expectedType for ID scalar resolution. */
-  public TypeName formatInput(String expectedType) {
-    return formatType(true, expectedType);
+  public TypeName formatInput(TypeRegistry registry, String expectedType) {
+    return formatType(registry, true, expectedType);
   }
 
-  private TypeName formatType(boolean isInput, String expectedType) {
+  private TypeName formatType(TypeRegistry registry, boolean isInput, String expectedType) {
     if ("Query".equals(getName())) {
-      return ClassName.bestGuess("Client");
+      return registry.forType("Query");
     }
     switch (getKind()) {
       case SCALAR -> {
@@ -133,28 +133,28 @@ public class TypeRef {
           case "ID" -> {
             // Unified ID scalar: resolve to expected type if present
             if (isInput && expectedType != null && !expectedType.isEmpty()) {
-              return ClassName.bestGuess(expectedType);
+              return registry.forType(expectedType);
             }
             // When used as output (e.g. id() field), return the ID type
-            return ClassName.bestGuess("ID");
+            return registry.forType("ID");
           }
           default -> {
             if (!isInput) {
-              return ClassName.bestGuess(getName());
+              return registry.forType(getName());
             }
-            return Helpers.convertScalarToObject(getName(), expectedType);
+            return Helpers.convertScalarToObject(registry, getName(), expectedType);
           }
         }
       }
       case OBJECT, ENUM, INPUT_OBJECT, INTERFACE -> {
-        return ClassName.bestGuess(getName());
+        return registry.forType(getName());
       }
       case LIST -> {
         return ParameterizedTypeName.get(
-            ClassName.get(List.class), getOfType().formatType(isInput, expectedType));
+            ClassName.get(List.class), getOfType().formatType(registry, isInput, expectedType));
       }
       default -> {
-        return getOfType().formatType(isInput, expectedType);
+        return getOfType().formatType(registry, isInput, expectedType);
       }
     }
   }

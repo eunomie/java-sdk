@@ -15,14 +15,15 @@ public class CodegenVisitor implements SchemaVisitor {
   private final VersionVisitor versionVisitor;
   private final IDAbleVisitor idAbleVisitor;
 
-  public CodegenVisitor(Schema schema, Path targetDirectory, Charset encoding) {
-    this.scalarVisitor = new ScalarVisitor(schema, targetDirectory, encoding);
-    this.inputVisitor = new InputVisitor(schema, targetDirectory, encoding);
-    this.enumVisitor = new EnumVisitor(schema, targetDirectory, encoding);
-    this.objectVisitor = new ObjectVisitor(schema, targetDirectory, encoding);
-    this.interfaceVisitor = new InterfaceVisitor(schema, targetDirectory, encoding);
-    this.versionVisitor = new VersionVisitor(targetDirectory, encoding);
-    this.idAbleVisitor = new IDAbleVisitor(schema, targetDirectory, encoding);
+  public CodegenVisitor(
+      Schema schema, TypeRegistry registry, Path targetDirectory, Charset encoding) {
+    this.scalarVisitor = new ScalarVisitor(schema, registry, targetDirectory, encoding);
+    this.inputVisitor = new InputVisitor(schema, registry, targetDirectory, encoding);
+    this.enumVisitor = new EnumVisitor(schema, registry, targetDirectory, encoding);
+    this.objectVisitor = new ObjectVisitor(schema, registry, targetDirectory, encoding);
+    this.interfaceVisitor = new InterfaceVisitor(schema, registry, targetDirectory, encoding);
+    this.versionVisitor = new VersionVisitor(registry.targetPackage(), targetDirectory, encoding);
+    this.idAbleVisitor = new IDAbleVisitor(schema, registry, targetDirectory, encoding);
   }
 
   @Override

@@ -11,8 +11,9 @@ import java.util.List;
 import javax.lang.model.element.Modifier;
 
 public class IDAbleVisitor extends AbstractMultiTypesVisitor {
-  public IDAbleVisitor(Schema schema, Path targetDirectory, Charset encoding) {
-    super(schema, targetDirectory, encoding);
+  public IDAbleVisitor(
+      Schema schema, TypeRegistry registry, Path targetDirectory, Charset encoding) {
+    super(schema, registry, targetDirectory, encoding);
   }
 
   @Override
@@ -24,7 +25,7 @@ public class IDAbleVisitor extends AbstractMultiTypesVisitor {
             .addMethod(
                 MethodSpec.methodBuilder("toJSON")
                     .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-                    .returns(ClassName.bestGuess("JSON"))
+                    .returns(registry().forType("JSON"))
                     .addException(Exception.class)
                     .addParameter(Object.class, "object")
                     .beginControlFlow(
@@ -32,15 +33,15 @@ public class IDAbleVisitor extends AbstractMultiTypesVisitor {
                         Jsonb.class,
                         JsonbBuilder.class,
                         JsonbConfig.class,
-                        ClassName.bestGuess("io.dagger.client.FieldsStrategy"))
+                        registry().runtime("FieldsStrategy"))
                     .beginControlFlow("if (object instanceof $T<?>)", Enum.class)
                     .addStatement(
                         "return $T.from(jsonb.toJson((($T<?>) object).name()))",
-                        ClassName.bestGuess("JSON"),
+                        registry().forType("JSON"),
                         Enum.class)
                     .endControlFlow()
                     .addStatement(
-                        "return $T.from(jsonb.toJson(object))", ClassName.bestGuess("JSON"))
+                        "return $T.from(jsonb.toJson(object))", registry().forType("JSON"))
                     .endControlFlow()
                     .build())
             .addMethod(
@@ -48,7 +49,7 @@ public class IDAbleVisitor extends AbstractMultiTypesVisitor {
                     .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                     .addTypeVariable(TypeVariableName.get("T"))
                     .returns(TypeVariableName.get("T"))
-                    .addParameter(ClassName.bestGuess("JSON"), "json")
+                    .addParameter(registry().forType("JSON"), "json")
                     .addParameter(
                         ParameterizedTypeName.get(
                             ClassName.get(Class.class), TypeVariableName.get("T")),
@@ -72,7 +73,7 @@ public class IDAbleVisitor extends AbstractMultiTypesVisitor {
                         Jsonb.class,
                         JsonbBuilder.class,
                         JsonbConfig.class,
-                        ClassName.bestGuess("io.dagger.client.FieldsStrategy"))
+                        registry().runtime("FieldsStrategy"))
                     .beginControlFlow("if (clazz.isEnum())")
                     .addStatement(
                         "$T valueOf = clazz.getMethod($S, $T.class)",

@@ -14,11 +14,18 @@ import java.util.stream.Stream;
 
 abstract class AbstractVisitor extends CodeWriter {
 
-  private Schema schema;
+  private final Schema schema;
+  private final TypeRegistry registry;
 
-  public AbstractVisitor(Schema schema, Path targetDirectory, Charset encoding) {
-    super(targetDirectory, encoding);
+  public AbstractVisitor(
+      Schema schema, TypeRegistry registry, Path targetDirectory, Charset encoding) {
+    super(registry.targetPackage(), targetDirectory, encoding);
     this.schema = schema;
+    this.registry = registry;
+  }
+
+  TypeRegistry registry() {
+    return registry;
   }
 
   void visit(Type type) throws IOException {

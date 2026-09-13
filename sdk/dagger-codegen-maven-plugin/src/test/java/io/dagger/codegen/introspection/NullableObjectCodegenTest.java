@@ -22,6 +22,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class NullableObjectCodegenTest {
 
+  private static final TypeRegistry REGISTRY = TypeRegistry.singlePackage("io.dagger.client");
+
   @TempDir Path compilationOutputDirectory;
 
   @Test
@@ -190,14 +192,14 @@ class NullableObjectCodegenTest {
       String qualifiedName = "io.dagger.client." + type.getName();
       if (type.getKind() == TypeKind.INTERFACE) {
         InterfaceVisitor visitor =
-            new InterfaceVisitor(schema, Path.of("."), StandardCharsets.UTF_8);
+            new InterfaceVisitor(schema, REGISTRY, Path.of("."), StandardCharsets.UTF_8);
         sources.put(qualifiedName, javaFile(visitor.generateType(type)));
         sources.put(qualifiedName + "Client", javaFile(visitor.generateClientType(type)));
       } else {
         sources.put(
             qualifiedName,
             javaFile(
-                new ObjectVisitor(schema, Path.of("."), StandardCharsets.UTF_8)
+                new ObjectVisitor(schema, REGISTRY, Path.of("."), StandardCharsets.UTF_8)
                     .generateType(type)));
       }
     }
@@ -241,9 +243,10 @@ class NullableObjectCodegenTest {
   }
 
   private static String generateInterface(Type type, String version) throws Exception {
-    return new InterfaceVisitor(schemaAtVersion(version), Path.of("."), StandardCharsets.UTF_8)
-        .generateType(type)
-        .toString();
+    return javaFile(
+        new InterfaceVisitor(
+                schemaAtVersion(version), REGISTRY, Path.of("."), StandardCharsets.UTF_8)
+            .generateType(type));
   }
 
   private static Schema schemaAtVersion(String version) throws Exception {

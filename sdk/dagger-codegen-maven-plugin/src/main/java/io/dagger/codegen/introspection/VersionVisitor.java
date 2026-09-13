@@ -9,8 +9,8 @@ import javax.lang.model.element.Modifier;
 
 public class VersionVisitor extends CodeWriter {
 
-  public VersionVisitor(Path targetDirectory, Charset encoding) {
-    super(targetDirectory, encoding);
+  public VersionVisitor(String targetPackage, Path targetDirectory, Charset encoding) {
+    super(targetPackage, targetDirectory, encoding);
   }
 
   public void visit(String version) throws IOException {

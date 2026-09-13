@@ -66,7 +66,12 @@ class OptionalArgsCodegenTest {
     byte[] introspection = "{\"__schema\":{\"types\":[]}}".getBytes(StandardCharsets.UTF_8);
     Schema schema = Schema.initialize(new ByteArrayInputStream(introspection), "v1.0.0-beta.11");
     TypeSpec client =
-        new ObjectVisitor(schema, Path.of("."), StandardCharsets.UTF_8).generateType(query);
+        new ObjectVisitor(
+                schema,
+                TypeRegistry.singlePackage("io.dagger.client"),
+                Path.of("."),
+                StandardCharsets.UTF_8)
+            .generateType(query);
     return JavaFile.builder("io.dagger.client", client).build().toString();
   }
 
