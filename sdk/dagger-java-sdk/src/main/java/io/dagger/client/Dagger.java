@@ -10,11 +10,12 @@ public class Dagger {
    * Returns the global Dagger client instance.
    *
    * <p>Contrary to {@code connect}, this is managed as a singleton. It will always return the same
-   * instance.
+   * instance. Synchronized because the first call may start an engine session, and two threads
+   * racing it would start two.
    *
    * @return Global Dagger client
    */
-  public static Client dag() {
+  public static synchronized Client dag() {
     if (dag == null) {
       try {
         dag = new Client(Connection.get(System.getProperty("user.dir")));
