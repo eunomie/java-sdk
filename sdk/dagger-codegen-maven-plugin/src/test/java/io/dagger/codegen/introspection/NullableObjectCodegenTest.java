@@ -132,8 +132,8 @@ class NullableObjectCodegenTest {
   }
 
   /**
-   * Interfaces that merely share an ancestor do not impose an override obligation on one another.
-   * A nullable field on one sibling must not make a same-named non-null field on another sibling
+   * Interfaces that merely share an ancestor do not impose an override obligation on one another. A
+   * nullable field on one sibling must not make a same-named non-null field on another sibling
    * Optional when their common ancestor does not declare that field.
    */
   @Test
@@ -154,24 +154,21 @@ class NullableObjectCodegenTest {
     Type nullableImplementation = type("NullableImplementation", TypeKind.OBJECT);
     nullableImplementation.setInterfaces(
         List.of(
-            typeRef(TypeKind.INTERFACE, "NullableSibling"),
-            typeRef(TypeKind.INTERFACE, "Root")));
+            typeRef(TypeKind.INTERFACE, "NullableSibling"), typeRef(TypeKind.INTERFACE, "Root")));
     nullableImplementation.setFields(
         List.of(field("child", typeRef(TypeKind.OBJECT, "Foo"), nullableImplementation)));
 
     Type implementation = type("NonNullImplementation", TypeKind.OBJECT);
     implementation.setInterfaces(
         List.of(
-            typeRef(TypeKind.INTERFACE, "NonNullSibling"),
-            typeRef(TypeKind.INTERFACE, "Root")));
+            typeRef(TypeKind.INTERFACE, "NonNullSibling"), typeRef(TypeKind.INTERFACE, "Root")));
     implementation.setFields(
         List.of(field("child", nonNull(typeRef(TypeKind.OBJECT, "Foo")), implementation)));
 
     Map<String, String> generated =
         sources(root, nullableSibling, nonNullSibling, nullableImplementation, implementation);
 
-    assertThat(generated.get("io.dagger.client.NullableSibling"))
-        .contains("Optional<Foo> child()");
+    assertThat(generated.get("io.dagger.client.NullableSibling")).contains("Optional<Foo> child()");
     assertThat(generated.get("io.dagger.client.NonNullSibling"))
         .contains("Foo child();")
         .doesNotContain("Optional<Foo> child()");

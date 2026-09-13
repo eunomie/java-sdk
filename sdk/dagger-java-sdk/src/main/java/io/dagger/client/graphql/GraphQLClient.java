@@ -14,9 +14,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * Minimal synchronous GraphQL-over-HTTP client for the Dagger session endpoint.
- */
+/** Minimal synchronous GraphQL-over-HTTP client for the Dagger session endpoint. */
 public final class GraphQLClient implements AutoCloseable {
 
   private final HttpClient http;
@@ -28,8 +26,7 @@ public final class GraphQLClient implements AutoCloseable {
     this.endpoint = URI.create(url);
     this.headers = new LinkedHashMap<>(extraHeaders);
     String encodedToken =
-        Base64.getEncoder()
-            .encodeToString((sessionToken + ":").getBytes(StandardCharsets.UTF_8));
+        Base64.getEncoder().encodeToString((sessionToken + ":").getBytes(StandardCharsets.UTF_8));
     this.headers.put("authorization", "Basic " + encodedToken);
     // Daemon threads so a module entrypoint exits even if close() is skipped
     this.executor =

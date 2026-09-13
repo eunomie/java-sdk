@@ -6,8 +6,8 @@ import java.util.stream.Collectors;
 
 /**
  * Renders Java values as GraphQL literals. Supported inputs are the normalized argument values
- * produced by io.dagger.client.Arguments: null, String, Integer, Long, Boolean, List and Map
- * (input objects).
+ * produced by io.dagger.client.Arguments: null, String, Integer, Long, Boolean, List and Map (input
+ * objects).
  */
 public final class GraphQLValues {
 

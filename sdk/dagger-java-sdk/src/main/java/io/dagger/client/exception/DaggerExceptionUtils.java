@@ -58,9 +58,7 @@ public class DaggerExceptionUtils {
 
   public static String toSimpleMessage(GraphQLError... errors) {
     return Arrays.stream(errors)
-        .map(
-            e ->
-                String.format(SIMPLE_MESSAGE, e.getMessage(), join(getPath(e), "."), getType(e)))
+        .map(e -> String.format(SIMPLE_MESSAGE, e.getMessage(), join(getPath(e), "."), getType(e)))
         .collect(Collectors.joining("\n"));
   }
 

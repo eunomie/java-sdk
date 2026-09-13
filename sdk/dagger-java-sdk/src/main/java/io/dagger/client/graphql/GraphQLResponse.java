@@ -7,9 +7,7 @@ import jakarta.json.JsonReader;
 import java.io.StringReader;
 import java.util.List;
 
-/**
- * A parsed GraphQL response payload ({@code {"data": ..., "errors": [...]}}).
- */
+/** A parsed GraphQL response payload ({@code {"data": ..., "errors": [...]}}). */
 public final class GraphQLResponse {
 
   private final JsonObject data;
