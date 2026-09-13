@@ -30,6 +30,18 @@ type E2e {
   let nonJavaModulePath: String! = fixtureRoot + "/lookup/not-java"
   let clientDepPath: String! = fixtureRoot + "/clients/dep"
 
+  # A Maven project that is not a Dagger module: the standalone scope.
+  let standalonePath: String! = fixtureRoot + "/clients/standalone"
+  let standaloneSourceRoot: String! = standalonePath + "/dagger/src/main/java"
+
+  """
+  The standalone scope's targets: one in the workspace and one at a git ref, so
+  both descriptor kinds are generated and both packages land.
+  """
+  let standaloneClients(ws: Workspace!): [ModuleSource!]! {
+    [ws.moduleSource("/" + clientDepPath), moduleSource(gitClientRef, refPin: gitClientPin)]
+  }
+
   # A git client, because a local module source carries no commit and so can
   # never show a pin, at an immutable tag so the commit asserted on cannot move.
   # It gets a module name of its own rather than sharing one: the dependency
@@ -320,6 +332,194 @@ type E2e {
     assert(
       withoutClient.directory("/" + bindingsDir).exists("modules") == false,
       "removing the last client should drop the modules tree",
+    )
+
+    null
+  }
+
+  """
+  A scope with no module of its own gets the same bindings for the same target
+  as a module does, under a dagger/ directory of its own, plus a profile in the
+  project's own pom so its build sees the sources. Every target it names is one
+  the generated package loads itself, local or git alike.
+  """
+  generateScopeStandaloneCheck(ws: Workspace!): Void @check {
+    let scoped = ws.withWorkdir(standalonePath)
+    let generated = javaSdk.generateScope(
+      scoped,
+      isModule: false,
+      name: "",
+      clients: standaloneClients(ws),
+    )
+
+    assert(generated.cwd == scoped.cwd, "generateScope must not change the workspace cwd")
+
+    let clientPackage = standaloneSourceRoot + "/io/dagger/client/modules/clientdep"
+    assert(
+      contains(generated.directory("/" + clientPackage).entries, "ClientDep.java"),
+      "no ClientDep.java under " + clientPackage,
+    )
+    # One source root, so the hand-written runtime and core sit beside the
+    # target's package rather than in a second tree the user's pom would have to
+    # be told about.
+    assert(
+      generated.directory("/" + standaloneSourceRoot).exists("io/dagger/client/Dagger.java"),
+      "the standalone tree should carry the SDK runtime",
+    )
+
+    # Two targets, one core: the git one is there because a client that travels
+    # outside its workspace can only be a git one.
+    assert(
+      contains(
+        generated.directory("/" + standaloneSourceRoot + "/io/dagger/client/modules/sdkhelpers").entries,
+        "SdkHelpers.java",
+      ),
+      "no SdkHelpers.java in the second target's package",
+    )
+    # Core names no client package: a target is reached through its own package
+    # and its own entry point, never by extending the global client.
+    assertNotContains(
+      generated.file("/" + standaloneSourceRoot + "/io/dagger/client/Client.java").contents,
+      "io.dagger.client.modules",
+      "core should not name a client package",
+    )
+
+    # Each package carries the descriptor it was generated against and loads its
+    # own module. This is the whole of what used to be a separate provider class
+    # and a service registration.
+    assertContainsAll(
+      generated.file("/" + clientPackage + "/ClientDep.java").contents,
+      [
+        # Workspace-root-absolute: the engine resolves a bare path from wherever
+        # the program was run, and only a leading slash means the same thing
+        # every time.
+        "ModuleTarget.inWorkspace(\"client-dep\", \"/" + clientDepPath + "\")",
+        "ModuleTargets.serve(",
+      ],
+    )
+    assertContainsAll(
+      generated
+        .file("/" + standaloneSourceRoot + "/io/dagger/client/modules/sdkhelpers/SdkHelpers.java")
+        .contents,
+      [
+        # A git target records the commit it resolved to, so the program reaches
+        # the module the bindings were generated from.
+        "ModuleTarget.atGitRef(\"" + gitClientName + "\", \"" + gitClientRef + "\", \""
+          + gitClientPin + "\")",
+        "ModuleTargets.serve(",
+      ],
+    )
+
+    let pom = generated.file("/" + standalonePath + "/pom.xml").contents
+    assertContainsAll(pom, [
+      "<id>dagger-clients</id>",
+      "<exists>dagger/src/main/java</exists>",
+      "<source>dagger/src/main/java</source>",
+    ])
+    let again = javaSdk.generateScope(
+      generated.withWorkdir(standalonePath),
+      isModule: false,
+      name: "",
+      clients: standaloneClients(ws),
+    )
+    assert(
+      again.file("/" + standalonePath + "/pom.xml").contents == pom,
+      "generating twice should not write the profile twice",
+    )
+
+    null
+  }
+
+  """
+  The generated standalone project is buildable Java. `mvn package` compiles it
+  in a container with no engine in reach and no Dagger CLI on PATH.
+
+  This is the only check that compiles a standalone scope, and it catches what
+  no assertion on file contents can: a generated source that names a type the
+  generator emitted as bare text and never imported. Every other standalone
+  check reads the files rather than building them.
+  """
+  standaloneCompilesCheck(ws: Workspace!): Void @check {
+    let generated = javaSdk.generateScope(
+      ws.withWorkdir(standalonePath),
+      isModule: false,
+      name: "",
+      clients: standaloneClients(ws),
+    )
+    container
+      .from("maven:3.9.9-eclipse-temurin-21-alpine@sha256:4cbb8bf76c46b97e028998f2486ed014759a8e932480431039bdb93dffe6813e")
+      .withoutEntrypoint
+      .withMountedCache("/root/.m2", cacheVolume("e2e-standalone-m2"))
+      .withDirectory("/app", generated.directory("/" + standalonePath))
+      .withWorkdir("/app")
+      .withExec(["mvn", "package", "-Dmaven.test.skip=true", "--no-transfer-progress"])
+      # Asserted, because a profile that failed to activate would compile
+      # nothing and `mvn package` would still succeed. Both client packages and
+      # a core class, so a build that saw only the runtime cannot pass either.
+      .withExec([
+        "test",
+        "-f",
+        "target/classes/io/dagger/client/modules/clientdep/ClientDep.class",
+      ])
+      .withExec([
+        "test",
+        "-f",
+        "target/classes/io/dagger/client/modules/sdkhelpers/SdkHelpers.class",
+      ])
+      .withExec(["test", "-f", "target/classes/io/dagger/client/Client.class"])
+      .sync
+
+    null
+  }
+
+  """
+  The payoff: the bindings for a target are the same artifact wherever they are
+  generated, and do not depend on what else is generated beside them.
+
+  The two scopes deliberately differ in both ways at once. One is a module and
+  one is not, and the module has this client alone while the standalone project
+  has it alongside another. The package still has to come out identical, down to
+  the descriptor it loads its module from.
+
+  The target compared is the git one, because it is the one both scopes can load
+  for themselves today. A module runtime has no session to resolve a workspace
+  path against, so a local target inside a module is still served by the engine
+  and its package is the one place the two scopes have left to differ. Closing
+  that is an engine change, not an SDK one; when it lands, modulePlan passes
+  servesWorkspacePaths: true and this check covers both kinds.
+  """
+  clientsAreOneArtifactCheck(ws: Workspace!): Void @check {
+    let packageSubpath = "io/dagger/client/modules/sdkhelpers"
+
+    let inModule = javaSdk.generateScope(
+      ws.withWorkdir(gitAppPath),
+      isModule: true,
+      name: gitAppName,
+      clients: [moduleSource(gitClientRef, refPin: gitClientPin)],
+    )
+    let standalone = javaSdk.generateScope(
+      ws.withWorkdir(standalonePath),
+      isModule: false,
+      name: "",
+      clients: standaloneClients(ws),
+    )
+
+    let fromModule = inModule.directory(
+      "/" + gitAppPath + "/sdk/src/generated/java/" + packageSubpath,
+    )
+    let fromStandalone = standalone.directory("/" + standaloneSourceRoot + "/" + packageSubpath)
+    # Asserted so that two empty directories, which would also have one digest,
+    # cannot pass for two identical packages.
+    assert(
+      contains(fromModule.entries, "SdkHelpers.java"),
+      "the module scope generated no client package to compare",
+    )
+    assert(
+      fromModule.digest == fromStandalone.digest,
+      "a target's package differs between a module and a standalone project: "
+        + fromModule.entries.join(", ")
+        + " against "
+        + fromStandalone.entries.join(", "),
     )
 
     null

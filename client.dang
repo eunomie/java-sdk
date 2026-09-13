@@ -1,0 +1,92 @@
+"""
+A Maven project that is not a Dagger module, and the modules it calls.
+
+The bindings it gets for a target are the ones a module would get for the same
+target: the same plan entry, the same generator, the same package. The plan
+entry carries where the target lives, so the generated package loads it itself;
+what this adds is a way for the project's own build to see those sources.
+"""
+type ClientScope {
+  """
+  Workspace-root-relative path of the Maven project this generates into.
+  """
+  rootPath: String!
+
+  """
+  Workspace containing the project.
+  """
+  let ws: Workspace!
+
+  """
+  The modules this project calls.
+  """
+  let targets: [ModuleSource!]!
+
+  """
+  The version the SDK jars are installed under while generating.
+  """
+  let sdkVersion: String!
+
+  let codegen: Codegen! { Codegen() }
+
+  """
+  The workspace with the generated clients under <scope>/dagger, and the scope's
+  own pom registering them.
+  """
+  generated: Workspace! {
+    let plan = codegen.clientPlan(targets)
+    let vendored = codegen.vendoredClients(plan, sdkVersion)
+    let daggerDir = workspaceRef(joinPath(rootPath, "dagger"))
+
+    # Replaced rather than merged: a target that is no longer requested has to
+    # lose its package, and an overlay would leave it behind.
+    ws
+      .withoutDirectory(daggerDir)
+      .withNewDirectory(daggerDir, vendored)
+      .withFile(
+        workspaceRef(joinPath(rootPath, "pom.xml")),
+        registeredPom(ws.file(workspaceRef(joinPath(rootPath, "pom.xml")))),
+      )
+  }
+
+  """
+  The version the codegen plugin is installed under. Fixed, and independent of
+  the per-scope version the SDK jars take.
+  """
+  let codegenPluginVersion: String! { "0.21.4" }
+
+  """
+  The scope's pom with the profile that compiles and packages the generated
+  clients. The pom belongs to the user, so the goal writes one marked element
+  and leaves everything else alone.
+
+  Run from an empty directory rather than from the pom's own: Maven would
+  otherwise read the user's pom as the project it is building, and a parent or
+  plugin it cannot resolve here would fail generation for no reason.
+  """
+  let registeredPom(pom: File!): File! {
+    codegen.pluginBase
+      .withFile("/scope/pom.xml", pom)
+      .withExec(["mkdir", "-p", "/work"])
+      .withWorkdir("/work")
+      .withExec([
+        "mvn",
+        "io.dagger:dagger-codegen-maven-plugin:" + codegenPluginVersion + ":client-pom",
+        "-Ddagger.pom=/scope/pom.xml",
+        "--no-transfer-progress",
+      ])
+      .file("/scope/pom.xml")
+  }
+
+  """
+  A path as a workspace-root-absolute path, the form Workspace resolves from the
+  workspace root rather than from the client's cwd.
+  """
+  let workspaceRef(path: String!): String! {
+    if (path == ".") { "/" } else { "/" + path }
+  }
+
+  let joinPath(path: String!, sub: String!): String! {
+    if (path == ".") { sub } else { path + "/" + sub }
+  }
+}

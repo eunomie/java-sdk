@@ -1,9 +1,10 @@
 """
-Code generation, shared by every Java scope.
+Turning a generation plan into a vendored tree.
 
 A module's vendored SDK and a standalone project's client tree come out of the
-same plan and the same Maven invocation. What differs is the plan: a module has
-a schema of its own for core, a standalone project has only its targets.
+same plan and the same Maven invocation. What differs is the plan — a module has
+a schema of its own for core, a standalone project has only its targets — and
+what is laid out around the generated sources.
 """
 type Codegen {
   """
@@ -128,19 +129,24 @@ type Codegen {
   }
 
   """
-  A maven container with the codegen plugin available in the local repository,
-  and the plan mounted at /plan.
+  The codegen container with a plan mounted at /plan.
+  """
+  let codegenBase(plan: Directory!): Container! {
+    pluginBase.withMountedDirectory("/plan", plan)
+  }
+
+  """
+  A maven container with the codegen plugin available in the local repository.
 
   Fast path: when the packager module has committed the plugin's local Maven
   repository under prebuilt/m2, drop it into ~/.m2/repository with a plain copy —
   no maven invocation. Otherwise fall back to installing a committed plugin jar,
   and finally to compiling the plugin from the vendored sources.
   """
-  let codegenBase(plan: Directory!): Container! {
+  let pluginBase: Container! {
     let base = mvn
       .withoutEntrypoint
       .withMountedCache("/root/.m2", mavenRepo, sharing: CacheSharingMode.LOCKED)
-      .withMountedDirectory("/plan", plan)
       .withDirectory("/dagger-io", sdkSourceDir)
       .withWorkdir("/dagger-io")
 

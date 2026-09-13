@@ -58,8 +58,10 @@ type JavaSdk {
   Every module then gets a dagger-module.toml from the manifest builder and is
   generated; a pre-1.0 dagger.json is migrated into it and removed, so two
   manifest files cannot disagree. The scope's module clients become the module's
-  dependencies, so the generated bindings include their types. Standalone
-  clients, in a scope without a module, are not generated yet.
+  dependencies, so the generated bindings include their types. A scope with no
+  module gets the same bindings for the same clients under its own dagger/
+  directory, and the descriptors and pom profile it needs to reach them and
+  build them.
   """
   generateScope(
     ws: Workspace!,
@@ -69,7 +71,16 @@ type JavaSdk {
   ): Workspace! {
     if (isModule == false) {
       if (clients.length > 0) {
-        raise "java-sdk does not generate standalone module clients yet"
+        let scope = normalizePath(ws.cwd)
+        # The same reason as the module branch: the engine resolves a target's
+        # local path relative to Workspace.cwd, and rejects a result whose cwd
+        # is not the scope.
+        ClientScope(
+          rootPath: scope,
+          ws: ws.withWorkdir("."),
+          targets: clients,
+          sdkVersion: clientSdkVersion(scope, name),
+        ).generated.withWorkdir(scope)
       } else {
         ws
       }
@@ -94,6 +105,27 @@ type JavaSdk {
         targets: clients,
         vendorSdkJar: vendorSdkJar,
       ).generated.withWorkdir(scope)
+    }
+  }
+
+  """
+  The version the SDK jars are installed under while a client scope generates.
+
+  Derived from the scope rather than shared, because the jars are cached under
+  this coordinate and two scopes that resolve to different schemas must not
+  collide on it. A scope the engine gave a name uses that name.
+  """
+  let clientSdkVersion(scope: String!, name: String!): String! {
+    if (name != "") {
+      name
+    } else if (scope == ".") {
+      "client-root"
+    } else {
+      # A separator becomes a dash, and a dash already in the path is doubled,
+      # so two scopes cannot derive one version and install different jars under
+      # the same Maven coordinate. Scope paths are normalized, so a run of
+      # separators — the one shape this would not separate — cannot occur.
+      "client-" + scope.split("-").join("--").split("/").join("-")
     }
   }
 
