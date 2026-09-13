@@ -64,6 +64,31 @@ public class Directive {
     return null;
   }
 
+  /**
+   * Get the owning module name from a list of directives. The engine attributes every type and
+   * field a module contributes with @sourceMap(module: "name"); core carries no module, so core
+   * returns null.
+   */
+  public static String getSourceMapModule(List<Directive> directives) {
+    if (directives == null) {
+      return null;
+    }
+    for (Directive d : directives) {
+      if ("sourceMap".equals(d.getName())) {
+        String val = d.getArgValue("module");
+        if (val == null) {
+          return null;
+        }
+        // The engine sends the argument JSON-encoded, so the quotes are part of the value.
+        if (val.length() > 1 && val.startsWith("\"") && val.endsWith("\"")) {
+          val = val.substring(1, val.length() - 1);
+        }
+        return val.isEmpty() ? null : val;
+      }
+    }
+    return null;
+  }
+
   @Override
   public String toString() {
     return "Directive{" + "name='" + name + '\'' + ", args=" + args + '}';

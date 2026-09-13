@@ -2,6 +2,7 @@ package io.dagger.codegen.introspection;
 
 import static java.util.Comparator.comparing;
 
+import jakarta.json.bind.annotation.JsonbTransient;
 import java.util.List;
 
 public class Type {
@@ -81,6 +82,12 @@ public class Type {
 
   public void setPossibleTypes(List<TypeRef> possibleTypes) {
     this.possibleTypes = possibleTypes;
+  }
+
+  /** The module that contributes this type, or null when the engine core owns it. */
+  @JsonbTransient
+  public String getOwningModule() {
+    return Directive.getSourceMapModule(directives);
   }
 
   public List<Directive> getDirectives() {
