@@ -1,5 +1,6 @@
 package io.dagger.codegen;
 
+import io.dagger.codegen.introspection.ClientEntryPoint;
 import io.dagger.codegen.introspection.CodegenVisitor;
 import io.dagger.codegen.introspection.Schema;
 import io.dagger.codegen.introspection.SchemaVisitor;
@@ -9,6 +10,7 @@ import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -84,8 +86,9 @@ public class DaggerCodegenMojo extends AbstractMojo {
       SchemaVisitor codegen =
           new CodegenVisitor(
               schema,
-              TypeRegistry.singlePackage("io.dagger.client"),
-              null,
+              TypeRegistry.acrossPackages(
+                  Generator.CORE_PACKAGE, Generator.RUNTIME_PACKAGE, Map.of()),
+              ClientEntryPoint.core(),
               null,
               dest,
               Charset.forName(outputEncoding));

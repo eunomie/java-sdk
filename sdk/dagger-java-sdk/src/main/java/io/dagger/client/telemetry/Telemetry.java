@@ -1,8 +1,8 @@
 package io.dagger.client.telemetry;
 
-import io.dagger.client.FunctionCall;
-import io.dagger.client.FunctionCallArgValue;
-import io.dagger.client.JsonConverter;
+import io.dagger.client.modules.core.FunctionCall;
+import io.dagger.client.modules.core.FunctionCallArgValue;
+import io.dagger.client.modules.core.JsonConverter;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.common.AttributesBuilder;
 import io.opentelemetry.api.trace.Span;

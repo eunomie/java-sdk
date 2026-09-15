@@ -20,6 +20,9 @@ public final class ModulePackage {
   /** The package every module's bindings go under. */
   public static final String ROOT = "io.dagger.client.modules";
 
+  /** The segment the generated core API takes, which is why no module may take it. */
+  public static final String CORE_SEGMENT = "core";
+
   private ModulePackage() {}
 
   /**

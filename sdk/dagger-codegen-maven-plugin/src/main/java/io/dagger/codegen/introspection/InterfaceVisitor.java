@@ -161,7 +161,8 @@ class InterfaceVisitor extends AbstractVisitor {
 
     // Build the query
     if (field.hasArgs()) {
-      fieldMethodBuilder.addStatement("Arguments.Builder builder = Arguments.newBuilder()");
+      fieldMethodBuilder.addStatement(
+          "$1T.Builder builder = $1T.newBuilder()", registry().runtime("Arguments"));
     }
     field
         .getRequiredArgs()
@@ -170,7 +171,8 @@ class InterfaceVisitor extends AbstractVisitor {
                 fieldMethodBuilder.addStatement(
                     "builder.add($1S, $2L)", arg.getName(), Helpers.formatName(arg)));
     if (field.hasArgs()) {
-      fieldMethodBuilder.addStatement("Arguments fieldArgs = builder.build()");
+      fieldMethodBuilder.addStatement(
+          "$T fieldArgs = builder.build()", registry().runtime("Arguments"));
     }
     if (field.hasArgs()) {
       fieldMethodBuilder.addStatement(

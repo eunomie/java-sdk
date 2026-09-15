@@ -12,14 +12,15 @@ import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeSpec;
 import io.dagger.client.Dagger;
-import io.dagger.client.FunctionCall;
-import io.dagger.client.FunctionCallArgValue;
-import io.dagger.client.ID;
-import io.dagger.client.JSON;
-import io.dagger.client.JsonConverter;
-import io.dagger.client.TypeDef;
 import io.dagger.client.exception.DaggerExecException;
 import io.dagger.client.exception.DaggerQueryException;
+import io.dagger.client.modules.core.Core;
+import io.dagger.client.modules.core.FunctionCall;
+import io.dagger.client.modules.core.FunctionCallArgValue;
+import io.dagger.client.modules.core.ID;
+import io.dagger.client.modules.core.JSON;
+import io.dagger.client.modules.core.JsonConverter;
+import io.dagger.client.modules.core.TypeDef;
 import io.dagger.client.telemetry.Telemetry;
 import io.dagger.module.annotation.Check;
 import io.dagger.module.annotation.Default;
@@ -286,7 +287,7 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
 
   private List<ParameterInfo> parseParameters(ExecutableElement elt) {
     return elt.getParameters().stream()
-        .filter(param -> !param.asType().toString().equals("io.dagger.client.Client"))
+        .filter(param -> !param.asType().toString().equals("io.dagger.client.modules.core.Core"))
         .map(
             param -> {
               TypeMirror tm = param.asType();
@@ -311,10 +312,10 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
 
               if (hasDefaultPathAnnotation
                   && !Set.of(
-                          "io.dagger.client.Directory",
-                          "io.dagger.client.File",
-                          "io.dagger.client.GitRepository",
-                          "io.dagger.client.GitRef")
+                          "io.dagger.client.modules.core.Directory",
+                          "io.dagger.client.modules.core.File",
+                          "io.dagger.client.modules.core.GitRepository",
+                          "io.dagger.client.modules.core.GitRef")
                       .contains(tm.toString())) {
                 throw new IllegalArgumentException(
                     "Parameter "
@@ -338,7 +339,8 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
 
               Ignore ignoreAnnotation = param.getAnnotation(Ignore.class);
               var hasIgnoreAnnotation = ignoreAnnotation != null;
-              if (hasIgnoreAnnotation && !tm.toString().equals("io.dagger.client.Directory")) {
+              if (hasIgnoreAnnotation
+                  && !tm.toString().equals("io.dagger.client.modules.core.Directory")) {
                 throw new IllegalArgumentException(
                     "Parameter "
                         + param.getSimpleName()
@@ -383,20 +385,22 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
               .addException(DaggerQueryException.class)
               .addException(InterruptedException.class)
               .addCode(
-                  "$T module = $T.dag().module()", io.dagger.client.Module.class, Dagger.class);
+                  "$T module = $T.core().module()",
+                  io.dagger.client.modules.core.Module.class,
+                  Core.class);
       if (isNotBlank(moduleInfo.description())) {
         rm.addCode("\n    .withDescription($S)", moduleInfo.description());
       }
       for (var objectInfo : moduleInfo.objects()) {
         rm.addCode("\n    .withObject(")
-            .addCode("\n        $T.dag().typeDef().withObject($S", Dagger.class, objectInfo.name());
+            .addCode("\n        $T.core().typeDef().withObject($S", Core.class, objectInfo.name());
         if (isNotBlank(objectInfo.description())) {
           rm.addCode(
               ", new $T.WithObjectArguments().withDescription($S)",
               TypeDef.class,
               objectInfo.description());
         }
-        rm.addCode(")"); // end of dag().TypeDef().withObject(
+        rm.addCode(")"); // end of core().TypeDef().withObject(
         for (var fnInfo : objectInfo.functions()) {
           rm.addCode("\n            .withFunction(")
               .addCode(withFunction(moduleInfo.enumInfos().keySet(), objectInfo, fnInfo))
@@ -407,7 +411,7 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
               .addCode("$S, ", fieldInfo.name())
               .addCode(DaggerType.of(fieldInfo.type()).toDaggerTypeDef());
           if (isNotBlank(fieldInfo.description())) {
-            rm.addCode(", new $T.WithFieldArguments()", io.dagger.client.TypeDef.class)
+            rm.addCode(", new $T.WithFieldArguments()", TypeDef.class)
                 .addCode(".withDescription($S)", fieldInfo.description());
           }
           rm.addCode(")");
@@ -423,20 +427,20 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
       }
       for (var enumInfo : moduleInfo.enumInfos().values()) {
         rm.addCode("\n    .withEnum(")
-            .addCode("\n        $T.dag().typeDef().withEnum($S", Dagger.class, enumInfo.name());
+            .addCode("\n        $T.core().typeDef().withEnum($S", Core.class, enumInfo.name());
         if (isNotBlank(enumInfo.description())) {
           rm.addCode(
               ", new $T.WithEnumArguments().withDescription($S)",
               TypeDef.class,
               enumInfo.description());
         }
-        rm.addCode(")"); // end of dag().TypeDef().withEnum(
+        rm.addCode(")"); // end of core().TypeDef().withEnum(
         for (var enumValue : enumInfo.values()) {
           rm.addCode("\n            .withEnumValue($S", enumValue.value());
           if (isNotBlank(enumValue.description())) {
             rm.addCode(
                 ", new $T.WithEnumValueArguments().withDescription($S)",
-                io.dagger.client.TypeDef.class,
+                TypeDef.class,
                 enumValue.description());
           }
           rm.addCode(")"); // end of .withEnumValue(
@@ -522,8 +526,8 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                               .beginControlFlow(
                                   "try ($T telemetry = new $T())", Telemetry.class, Telemetry.class)
                               .addStatement(
-                                  "new Entrypoint().dispatch($T.dag().currentFunctionCall())",
-                                  Dagger.class)
+                                  "new Entrypoint().dispatch($T.core().currentFunctionCall())",
+                                  Core.class)
                               .nextControlFlow("finally")
                               .addStatement("$T.dag().close()", Dagger.class)
                               .endControlFlow()
@@ -564,18 +568,18 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                               .addStatement("return null")
                               .nextControlFlow("catch ($T e)", InvocationTargetException.class)
                               .addStatement(
-                                  "fnCall.returnError($T.dag().error(e.getTargetException().getMessage()))",
-                                  Dagger.class)
+                                  "fnCall.returnError($T.core().error(e.getTargetException().getMessage()))",
+                                  Core.class)
                               .addStatement("throw e")
                               .nextControlFlow("catch ($T e)", DaggerExecException.class)
                               .addStatement(
-                                  "fnCall.returnError($T.dag().error(e.getMessage())"
+                                  "fnCall.returnError($T.core().error(e.getMessage())"
                                       + ".withValue(\"stdout\", $T.toJSON(e.getStdOut()))"
                                       + ".withValue(\"stderr\", $T.toJSON(e.getStdErr()))"
                                       + ".withValue(\"cmd\", $T.toJSON(e.getCmd()))"
                                       + ".withValue(\"exitCode\", $T.toJSON(e.getExitCode()))"
                                       + ".withValue(\"path\", $T.toJSON(e.getPath())))",
-                                  Dagger.class,
+                                  Core.class,
                                   JsonConverter.class,
                                   JsonConverter.class,
                                   JsonConverter.class,
@@ -584,8 +588,7 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                               .addStatement("throw e")
                               .nextControlFlow("catch ($T e)", Exception.class)
                               .addStatement(
-                                  "fnCall.returnError($T.dag().error(e.getMessage()))",
-                                  Dagger.class)
+                                  "fnCall.returnError($T.core().error(e.getMessage()))", Core.class)
                               .addStatement("throw e")
                               .endControlFlow()
                               .build())
@@ -594,6 +597,7 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
                       .build())
               .addFileComment("This class has been generated by dagger-java-sdk. DO NOT EDIT.")
               .indent("  ")
+              .addStaticImport(Core.class, "core")
               .addStaticImport(Dagger.class, "dag")
               .build();
 
@@ -708,8 +712,8 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
     CodeBlock.Builder code =
         CodeBlock.builder()
             .add(
-                "\n                $T.dag().function($S,",
-                Dagger.class,
+                "\n                $T.core().function($S,",
+                Core.class,
                 isConstructor ? "" : fnInfo.name())
             .add("\n                    ")
             .add(
@@ -740,7 +744,7 @@ public class DaggerModuleAnnotationProcessor extends AbstractProcessor {
       boolean hasDefaultPath = parameterInfo.defaultPath().isPresent();
       boolean hasIgnore = parameterInfo.ignore().isPresent();
       if (hasDescription || hasDefaultValue || hasDefaultPath || hasIgnore) {
-        code.add(", new $T.WithArgArguments()", io.dagger.client.Function.class);
+        code.add(", new $T.WithArgArguments()", io.dagger.client.modules.core.Function.class);
         if (hasDescription) {
           code.add(".withDescription($S)", parameterInfo.description());
         }

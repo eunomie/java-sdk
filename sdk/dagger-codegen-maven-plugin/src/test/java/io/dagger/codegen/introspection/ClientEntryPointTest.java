@@ -12,7 +12,7 @@ class ClientEntryPointTest {
   /** The engine camel-cases a module's name to namespace its types, and {@code e2e} becomes E2E. */
   @Test
   void theRootTypeIsTheReturnTypeOfTheQueryFieldNotTheModuleName() throws Exception {
-    ClientEntryPoint entry = entryPoint(E2E, "e2e");
+    ClientEntryPoint.Module entry = entryPoint(E2E, "e2e");
 
     assertThat(entry.rootTypeName()).isEqualTo("E2E");
     assertThat(entry.entryField().getName()).isEqualTo("e2e");
@@ -48,11 +48,11 @@ class ClientEntryPointTest {
         .hasMessageContaining("Rename the module");
   }
 
-  private static ClientEntryPoint entryPoint(String json, String module) throws Exception {
+  private static ClientEntryPoint.Module entryPoint(String json, String module) throws Exception {
     Schema schema =
         Schema.initialize(
             new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), "v1.0.0-beta.13");
-    return new ClientEntryPoint(SchemaPartition.client(schema, module));
+    return ClientEntryPoint.module(SchemaPartition.client(schema, module));
   }
 
   private static String owned(String module) {

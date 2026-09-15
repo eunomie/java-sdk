@@ -22,6 +22,9 @@ class ObjectVisitor extends AbstractVisitor {
   /** The constant each entry point serves before it selects anything. */
   private static final String TARGET = "TARGET";
 
+  /** What the two forms of the core entry say, which no schema field describes. */
+  private static final String CORE_JAVADOC = "The core API.\n";
+
   private final ClientEntryPoint entryPoint;
   private final ModuleTargetRef source;
 
@@ -75,26 +78,6 @@ class ObjectVisitor extends AbstractVisitor {
     }
 
     if ("Query".equals(type.getName())) {
-      MethodSpec constructor =
-          MethodSpec.constructorBuilder()
-              .addModifiers(Modifier.PUBLIC)
-              .addParameter(registry().runtime("engineconn", "Connection"), "connection")
-              .addStatement("this.connection = connection")
-              .addStatement("this.queryBuilder = new QueryBuilder(connection.getGraphQLClient())")
-              .build();
-      classBuilder.addMethod(constructor);
-      classBuilder.addField(
-          FieldSpec.builder(
-                  registry().runtime("engineconn", "Connection"), "connection", Modifier.PRIVATE)
-              .build());
-      MethodSpec closeMethod =
-          MethodSpec.methodBuilder("close")
-              .addException(Exception.class)
-              .addModifiers(Modifier.PUBLIC)
-              .addStatement("this.connection.close()")
-              .build();
-      classBuilder.addMethod(closeMethod);
-
       // loadObjectFromID: load any object by its ID using node(id:) + inline fragment
       classBuilder.addMethod(
           MethodSpec.methodBuilder("loadObjectFromID")
@@ -165,7 +148,7 @@ class ObjectVisitor extends AbstractVisitor {
                         .addStatement(
                             "$T id = ctx.deserialize($T.class, parser)", String.class, String.class)
                         .addStatement(
-                            "$T o = new $T($T.dag().nodeQueryBuilder($S, new $T(id)))",
+                            "$T o = new $T($T.dag().queryBuilder().chainNode($S, new $T(id)))",
                             thisType,
                             thisType,
                             registry().runtime("Dagger"),
@@ -231,22 +214,53 @@ class ObjectVisitor extends AbstractVisitor {
     return classBuilder.build();
   }
 
-  /**
-   * The way into this client package: the module's {@code Query} field, and every field it
-   * contributes to another core type.
-   */
+  /** The way into this generated package, which core and a module reach differently. */
   private void buildEntryPoints(TypeSpec.Builder classBuilder, Type type) {
-    if (source != null) {
-      classBuilder.addField(targetConstant());
+    if (entryPoint instanceof ClientEntryPoint.Module module) {
+      buildModuleEntryPoints(classBuilder, type, module);
+    } else {
+      buildCoreEntryPoint(classBuilder);
     }
-    Entry onQuery = new Entry(entryPoint.module(), null, null);
-    buildEntry(classBuilder, entryPoint.entryField(), type, onQuery);
-    entryPoint
+  }
+
+  /**
+   * Core: the session is the receiver and there is no field to single out, so the entry wraps the
+   * session's own builder rather than chaining anything onto it. Nothing is served either — core is
+   * what a session already answers.
+   */
+  private void buildCoreEntryPoint(TypeSpec.Builder classBuilder) {
+    ClassName core = registry().forType("Query");
+    MethodSpec entry =
+        MethodSpec.methodBuilder(entryPoint.entryName())
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .returns(core)
+            .addParameter(
+                ParameterSpec.builder(registry().runtime("Session"), "dag")
+                    .addJavadoc("the session to reach core in\n")
+                    .build())
+            .addJavadoc(CORE_JAVADOC)
+            .addStatement("return new $T(dag.queryBuilder())", core)
+            .build();
+    classBuilder.addMethod(entry);
+    classBuilder.addMethod(ambient(entry, CORE_JAVADOC));
+  }
+
+  /**
+   * A module: the {@code Query} field it owns, and every field it contributes to another core type.
+   */
+  private void buildModuleEntryPoints(
+      TypeSpec.Builder classBuilder, Type type, ClientEntryPoint.Module module) {
+    if (source != null) {
+      classBuilder.addField(targetConstant(module));
+    }
+    Entry onQuery = new Entry(module.module(), null, null);
+    buildEntry(classBuilder, module.entryField(), type, onQuery);
+    module
         .shims()
         .forEach(
             (typeName, fields) -> {
               ClassName receiverType = registry().forType(typeName);
-              Entry shim = new Entry(entryPoint.module(), receiverType, uncapitalize(typeName));
+              Entry shim = new Entry(module.module(), receiverType, uncapitalize(typeName));
               fields.forEach(field -> buildEntry(classBuilder, field, type, shim));
             });
   }
@@ -261,12 +275,12 @@ class ObjectVisitor extends AbstractVisitor {
       buildFieldArgumentsHelpers(classBuilder, field, type, entry);
       MethodSpec withOptArgs = buildFieldMethod(classBuilder, field, true, entry);
       if (entry.onQuery()) {
-        classBuilder.addMethod(ambient(withOptArgs, field));
+        classBuilder.addMethod(ambient(withOptArgs, Helpers.escapeJavadoc(field.getDescription())));
       }
     }
     MethodSpec method = buildFieldMethod(classBuilder, field, false, entry);
     if (entry.onQuery()) {
-      classBuilder.addMethod(ambient(method, field));
+      classBuilder.addMethod(ambient(method, Helpers.escapeJavadoc(field.getDescription())));
     }
   }
 
@@ -275,16 +289,15 @@ class ObjectVisitor extends AbstractVisitor {
    * one loads its own module; one generated against a module the engine serves already carries
    * none, and the entry points below ask for nothing.
    */
-  private FieldSpec targetConstant() {
+  private FieldSpec targetConstant(ClientEntryPoint.Module module) {
     ClassName target = registry().runtime("ModuleTarget");
     CodeBlock initializer;
     if (source instanceof ModuleTargetRef.InWorkspace workspace) {
       initializer =
-          CodeBlock.of("$T.inWorkspace($S, $S)", target, entryPoint.module(), workspace.path());
+          CodeBlock.of("$T.inWorkspace($S, $S)", target, module.module(), workspace.path());
     } else if (source instanceof ModuleTargetRef.AtGitRef git) {
       initializer =
-          CodeBlock.of(
-              "$T.atGitRef($S, $S, $S)", target, entryPoint.module(), git.ref(), git.pin());
+          CodeBlock.of("$T.atGitRef($S, $S, $S)", target, module.module(), git.ref(), git.pin());
     } else {
       throw new IllegalStateException("no way to reach the module target " + source);
     }
@@ -296,7 +309,7 @@ class ObjectVisitor extends AbstractVisitor {
   /**
    * The same entry over the ambient session, so a caller that never named one still has a way in.
    */
-  private MethodSpec ambient(MethodSpec entry, Field field) {
+  private MethodSpec ambient(MethodSpec entry, String javadoc) {
     List<ParameterSpec> withoutSession = entry.parameters().subList(1, entry.parameters().size());
     CodeBlock.Builder call =
         CodeBlock.builder().add("return $L($T.dag()", entry.name(), registry().runtime("Dagger"));
@@ -308,7 +321,7 @@ class ObjectVisitor extends AbstractVisitor {
         .returns(entry.returnType())
         .addParameters(withoutSession)
         .addExceptions(entry.exceptions())
-        .addJavadoc(Helpers.escapeJavadoc(field.getDescription()))
+        .addJavadoc(javadoc)
         .addJavadoc("\n@see $T#dag()\n", registry().runtime("Dagger"))
         .addStatement(call.build())
         .build();
@@ -344,7 +357,7 @@ class ObjectVisitor extends AbstractVisitor {
       fieldMethodBuilder.addModifiers(Modifier.STATIC);
       if (entry.onQuery()) {
         fieldMethodBuilder.addParameter(
-            ParameterSpec.builder(registry().forType("Query"), "dag")
+            ParameterSpec.builder(registry().runtime("Session"), "dag")
                 .addJavadoc("the session to reach the target in\n")
                 .build());
       } else {

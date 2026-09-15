@@ -1,6 +1,6 @@
 package io.dagger.client.engineconn;
 
-import io.dagger.client.Version;
+import io.dagger.client.modules.core.Version;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;

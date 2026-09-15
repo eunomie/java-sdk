@@ -11,22 +11,22 @@ class DaggerTypeTest {
 
   @Test
   void optionalObjectReturnsAreRegisteredAsOptionalAndUnwrappedForSerialization() {
-    DaggerType type = declared("java.util.Optional<io.dagger.client.Container>");
+    DaggerType type = declared("java.util.Optional<io.dagger.client.modules.core.Container>");
 
     assertThat(type.toDaggerTypeDef().toString())
         .isEqualTo(
-            "io.dagger.client.Dagger.dag().typeDef().withObject(\"Container\").withOptional(true)");
+            "io.dagger.client.modules.core.Core.core().typeDef().withObject(\"Container\").withOptional(true)");
     assertThat(type.toJavaType().toString())
-        .isEqualTo("java.util.Optional<io.dagger.client.Container>");
+        .isEqualTo("java.util.Optional<io.dagger.client.modules.core.Container>");
     assertThat(type.valueForSerialization("result").toString()).isEqualTo("result.orElse(null)");
   }
 
   @Test
   void nonOptionalReturnsSerializeAsThemselves() {
-    DaggerType type = declared("io.dagger.client.Container");
+    DaggerType type = declared("io.dagger.client.modules.core.Container");
 
     assertThat(type.toDaggerTypeDef().toString())
-        .isEqualTo("io.dagger.client.Dagger.dag().typeDef().withObject(\"Container\")");
+        .isEqualTo("io.dagger.client.modules.core.Core.core().typeDef().withObject(\"Container\")");
     assertThat(type.valueForSerialization("result").toString()).isEqualTo("result");
   }
 
@@ -41,11 +41,12 @@ class DaggerTypeTest {
             "maybeContainer",
             "",
             new TypeInfo(
-                "java.util.Optional<io.dagger.client.Container>", TypeKind.DECLARED.name()));
+                "java.util.Optional<io.dagger.client.modules.core.Container>",
+                TypeKind.DECLARED.name()));
 
     assertThat(DaggerType.of(field.type()).toDaggerTypeDef().toString())
         .isEqualTo(
-            "io.dagger.client.Dagger.dag().typeDef().withObject(\"Container\").withOptional(true)");
+            "io.dagger.client.modules.core.Core.core().typeDef().withObject(\"Container\").withOptional(true)");
   }
 
   private static DaggerType declared(String typeName) {

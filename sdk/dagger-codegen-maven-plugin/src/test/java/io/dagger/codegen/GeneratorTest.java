@@ -26,12 +26,12 @@ class GeneratorTest {
 
     assertThat(emitted())
         .contains(
-            "io/dagger/client/Client.java",
-            "io/dagger/client/Container.java",
+            CORE + "Core.java",
+            CORE + "Container.java",
             "io/dagger/client/modules/alpha/Alpha.java",
             "io/dagger/client/modules/alpha/AlphaReport.java",
             "io/dagger/client/modules/beta/Beta.java");
-    assertThat(emitted()).doesNotContain("io/dagger/client/Alpha.java");
+    assertThat(emitted()).doesNotContain(CORE + "Alpha.java");
   }
 
   /** A target is reached from its own package, so no core source names one. */
@@ -42,14 +42,38 @@ class GeneratorTest {
     generate();
 
     for (String source : emitted()) {
-      if (source.startsWith("io/dagger/client/modules/")) {
+      if (!source.startsWith(CORE)) {
         continue;
       }
-      assertThat(read(source))
+      // Its own package taken out, so what is left is any client package core named.
+      assertThat(read(source).replace(CORE_PACKAGE, ""))
           .as("core source %s", source)
           .doesNotContain("io.dagger.client.modules");
     }
-    assertThat(read("io/dagger/client/Client.java")).doesNotContain("Alpha").doesNotContain("Beta");
+    assertThat(read(CORE + "Core.java")).doesNotContain("Alpha").doesNotContain("Beta");
+  }
+
+  /**
+   * Core is entered the way a target is: a static method on its own root type, over a session named
+   * or ambient. What differs is that the session is already core, so there is nothing to select and
+   * nothing to serve.
+   */
+  @Test
+  void coreIsEnteredFromItsOwnPackage() throws Exception {
+    writePlan(CORE_WITH_TWO_TARGETS, target("alpha", ALPHA), target("beta", BETA));
+
+    generate();
+
+    String core = read(CORE + "Core.java");
+    assertThat(core)
+        .contains("package io.dagger.client.modules.core;")
+        .contains("import io.dagger.client.Session;")
+        .contains("public static Core core(Session dag)")
+        .contains("return new Core(dag.queryBuilder())")
+        .contains("public static Core core()")
+        .contains("return core(Dagger.dag())");
+    assertThat(core).doesNotContain("ModuleTarget").doesNotContain("Connection");
+    assertThat(emitted()).doesNotContain("io/dagger/client/Client.java");
   }
 
   /** The way into a target is a static method on its root type, taking the session it runs in. */
@@ -60,12 +84,12 @@ class GeneratorTest {
     generate();
 
     assertThat(read("io/dagger/client/modules/alpha/Alpha.java"))
-        .contains("import io.dagger.client.Client;")
-        .contains("public static Alpha alpha(Client dag, String source)")
+        .contains("import io.dagger.client.Session;")
+        .contains("public static Alpha alpha(Session dag, String source)")
         .contains("public static Alpha alpha(String source)")
         .contains("return alpha(Dagger.dag(), source)");
     assertThat(read("io/dagger/client/modules/beta/Beta.java"))
-        .contains("public static Beta beta(Client dag)")
+        .contains("public static Beta beta(Session dag)")
         .contains("public static Beta beta()");
   }
 
@@ -78,9 +102,9 @@ class GeneratorTest {
 
     assertThat(read("io/dagger/client/modules/alpha/Alpha.java"))
         .contains("public static class AlphaArguments")
-        .contains("public static Alpha alpha(Client dag, String source, AlphaArguments optArgs)")
+        .contains("public static Alpha alpha(Session dag, String source, AlphaArguments optArgs)")
         .contains("public static Alpha alpha(String source, AlphaArguments optArgs)");
-    assertThat(read("io/dagger/client/Client.java")).doesNotContain("AlphaArguments");
+    assertThat(read(CORE + "Core.java")).doesNotContain("AlphaArguments");
   }
 
   /** A field a module contributes to another core type moves with it, receiver and all. */
@@ -91,10 +115,10 @@ class GeneratorTest {
     generate();
 
     assertThat(read("io/dagger/client/modules/alpha/Alpha.java"))
-        .contains("import io.dagger.client.Binding;")
+        .contains("import io.dagger.client.modules.core.Binding;")
         .contains("public static Alpha asAlpha(Binding binding)")
         .contains("binding.queryBuilder().chain(\"asAlpha\")");
-    assertThat(read("io/dagger/client/Binding.java")).doesNotContain("asAlpha");
+    assertThat(read(CORE + "Binding.java")).doesNotContain("asAlpha");
     assertThat(emitted()).doesNotContain("io/dagger/client/modules/alpha/Binding.java");
   }
 
@@ -121,7 +145,7 @@ class GeneratorTest {
                 }
             """
                 .stripTrailing());
-    assertThat(alpha).doesNotContain("asAlpha(Client dag");
+    assertThat(alpha).doesNotContain("asAlpha(Session dag");
   }
 
   @Test
@@ -131,7 +155,7 @@ class GeneratorTest {
     generate();
 
     assertThat(read("io/dagger/client/modules/alpha/Alpha.java"))
-        .contains("import io.dagger.client.Container;");
+        .contains("import io.dagger.client.modules.core.Container;");
   }
 
   /**
@@ -154,7 +178,7 @@ class GeneratorTest {
             "private static final ModuleTarget TARGET = ModuleTarget.atGitRef(\"beta\","
                 + " \"github.com/dagger/beta@v1\", \"0123abc\");")
         .contains("ModuleTargets.serve(dag.queryBuilder(), TARGET);");
-    assertThat(read("io/dagger/client/Client.java")).doesNotContain("ModuleTargets");
+    assertThat(read(CORE + "Core.java")).doesNotContain("ModuleTargets");
   }
 
   /**
@@ -171,7 +195,7 @@ class GeneratorTest {
 
     String alpha = read("io/dagger/client/modules/alpha/Alpha.java");
     assertThat(alpha).doesNotContain("ModuleTarget").doesNotContain("TARGET");
-    assertThat(alpha).contains("public static Alpha alpha(Client dag, String source)");
+    assertThat(alpha).contains("public static Alpha alpha(Session dag, String source)");
     assertThat(shimOf(alpha, "asAlpha"))
         .isEqualTo(
             """
@@ -189,7 +213,7 @@ class GeneratorTest {
 
     generate();
 
-    String container = read("io/dagger/client/Container.java");
+    String container = read(CORE + "Container.java");
     assertThat(container).doesNotContain("ModuleTargets");
   }
 
@@ -197,7 +221,7 @@ class GeneratorTest {
   void theSamePlanGeneratesTheSameBytesWhateverOrderItsEntriesAreLaidOutIn() throws Exception {
     writePlan(CORE_WITH_TWO_TARGETS, target("alpha", ALPHA), target("beta", BETA));
     generate();
-    String first = read("io/dagger/client/Client.java");
+    String first = read(CORE + "Core.java");
 
     Path reversed = Files.createTempDirectory("plan-reversed");
     writePlanAt(reversed, CORE_WITH_TWO_TARGETS, target("beta", BETA), target("alpha", ALPHA));
@@ -205,8 +229,7 @@ class GeneratorTest {
     new Generator(secondOut, StandardCharsets.UTF_8, VERSION)
         .generate(GenerationPlan.read(reversed));
 
-    assertThat(Files.readString(secondOut.resolve("io/dagger/client/Client.java")))
-        .isEqualTo(first);
+    assertThat(Files.readString(secondOut.resolve(CORE + "Core.java"))).isEqualTo(first);
   }
 
   @Test
@@ -229,11 +252,11 @@ class GeneratorTest {
     generate();
 
     assertThat(read("io/dagger/client/modules/alpha/Alpha.java"))
-        .contains("public static Alpha alpha(Client dag, String source)");
+        .contains("public static Alpha alpha(Session dag, String source)");
     assertThat(read("io/dagger/client/modules/beta/Beta.java"))
-        .contains("public static Beta beta(Client dag)");
-    assertThat(read("io/dagger/client/Client.java")).doesNotContain("Alpha").doesNotContain("Beta");
-    assertThat(read("io/dagger/client/Container.java")).isNotEmpty();
+        .contains("public static Beta beta(Session dag)");
+    assertThat(read(CORE + "Core.java")).doesNotContain("Alpha").doesNotContain("Beta");
+    assertThat(read(CORE + "Container.java")).isNotEmpty();
     assertThat(emitted())
         .contains(
             "io/dagger/client/modules/alpha/Alpha.java", "io/dagger/client/modules/beta/Beta.java");
@@ -243,7 +266,7 @@ class GeneratorTest {
   void mergingCoreDoesNotDependOnTheOrderTheTargetsAreRead() throws Exception {
     writePlanWithoutCore(target("alpha", ALPHA), target("beta", BETA));
     generate();
-    String first = read("io/dagger/client/Client.java");
+    String first = read(CORE + "Core.java");
 
     Path reversed = Files.createTempDirectory("plan-reversed-merge");
     writePlanAt(reversed, null, target("beta", BETA), target("alpha", ALPHA));
@@ -251,8 +274,7 @@ class GeneratorTest {
     new Generator(secondOut, StandardCharsets.UTF_8, VERSION)
         .generate(GenerationPlan.read(reversed));
 
-    assertThat(Files.readString(secondOut.resolve("io/dagger/client/Client.java")))
-        .isEqualTo(first);
+    assertThat(Files.readString(secondOut.resolve(CORE + "Core.java"))).isEqualTo(first);
   }
 
   /**
@@ -310,7 +332,7 @@ class GeneratorTest {
     generate();
 
     assertThat(emitted()).contains("io/dagger/client/modules/alpha/Alpha.java");
-    assertThat(emitted()).doesNotContain("io/dagger/client/Host.java");
+    assertThat(emitted()).doesNotContain(CORE + "Host.java");
   }
 
   /**
@@ -340,6 +362,11 @@ class GeneratorTest {
         .hasMessageContaining("alpha")
         .hasMessageContaining("Container");
   }
+
+  /** Where core lands: a package under the modules root, like every other client. */
+  private static final String CORE_PACKAGE = "io.dagger.client.modules.core";
+
+  private static final String CORE = CORE_PACKAGE.replace('.', '/') + "/";
 
   private void generate() throws IOException {
     new Generator(out, StandardCharsets.UTF_8, VERSION).generate(GenerationPlan.read(plan));

@@ -20,8 +20,8 @@ import java.util.Set;
 /** Emits every package a {@link GenerationPlan} names, in one pass over one type registry. */
 public final class Generator {
 
-  /** The package the generated core API goes into. */
-  public static final String CORE_PACKAGE = "io.dagger.client";
+  /** The package the generated core API goes into, beside every other client package. */
+  public static final String CORE_PACKAGE = ModulePackage.ROOT + "." + ModulePackage.CORE_SEGMENT;
 
   /** The package the hand-written runtime lives in, which no generation writes to. */
   public static final String RUNTIME_PACKAGE = "io.dagger.client";
@@ -52,7 +52,7 @@ public final class Generator {
       schemas.put(target.module(), schema);
       String pkg = packages.get(target.module());
       SchemaPartition partition = SchemaPartition.client(schema, target.module());
-      entryPoints.put(target.module(), new ClientEntryPoint(partition));
+      entryPoints.put(target.module(), ClientEntryPoint.module(partition));
       for (String owned : partition.typeNames()) {
         requireUnclaimed(targetByTypeName, owned, target.module());
         packageByTypeName.put(owned, pkg);
@@ -72,7 +72,11 @@ public final class Generator {
 
     TypeRegistry registry =
         TypeRegistry.acrossPackages(CORE_PACKAGE, RUNTIME_PACKAGE, packageByTypeName);
-    emit(SchemaPartition.core(coreSchema), registry.emittingInto(CORE_PACKAGE), null, null);
+    emit(
+        SchemaPartition.core(coreSchema),
+        registry.emittingInto(CORE_PACKAGE),
+        ClientEntryPoint.core(),
+        null);
     for (GenerationPlan.Target target : plan.targets()) {
       String pkg = packages.get(target.module());
       emit(
