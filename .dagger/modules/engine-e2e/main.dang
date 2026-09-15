@@ -49,9 +49,16 @@ type EngineE2e {
       .withExec(["test", "-f", modulePath + "/pom.xml"])
       .withExec(["test", "-f", modulePath + "/src/main/java/io/dagger/modules/sdksmoke/SdkSmoke.java"])
       .withExec(["test", "-f", modulePath + "/sdk/src/main/java/io/dagger/client/Dagger.java"])
+      # Core is a client package: generated under the modules root like any
+      # other, and nothing is emitted flat beside the hand-written runtime.
+      .withExec(["test", "-f", modulePath + "/sdk/src/generated/java/io/dagger/client/modules/core/Core.java"])
+      .withExec(["test", "!", "-e", modulePath + "/sdk/src/generated/java/io/dagger/client/Client.java"])
       .withExec(["test", "-f", modulePath + "/src/generated/java/io/dagger/gen/entrypoint/Entrypoint.java"])
       .withExec(["grep", "-q", "github.com/dagger/java-sdk/runtime", modulePath + "/dagger-module.toml"])
 
+    # The scaffolded module's one function is core().container(), so running it
+    # proves core is reachable through its own package at run time, not just
+    # that the sources compile.
     let release = initialized
       .withExec(["dagger", "-m", modulePath, "call", "container", "file", "--path", "/etc/alpine-release", "contents"])
       .stdout
