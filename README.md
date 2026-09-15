@@ -63,7 +63,8 @@ generates the SDK bindings in one step:
   src/generated/java/io/dagger/gen/entrypoint/Entrypoint.java   # generated entrypoint
   sdk/src/main/java/...                                         # vendored SDK library
   sdk/src/processor/java/...                                    # vendored annotation processor
-  sdk/src/generated/java/...                                    # client bindings (from the engine schema)
+  sdk/src/generated/java/io/dagger/client/modules/core/...      # the core API (from the engine schema)
+  sdk/src/generated/java/io/dagger/client/modules/<client>/...   # one package per client
 ```
 
 The SDK settings become typed flags on `dagger module init java` and are
@@ -106,6 +107,31 @@ nearest one at or above your current directory, which is how
 project built with anything but Maven has no `pom.xml`, so this SDK reports no
 scope for it.
 
+## Calling the core API
+
+Core is a client package like any other. Its types are generated into
+`io.dagger.client.modules.core`, and the way in is a static method on its root
+type:
+
+```java
+import static io.dagger.client.modules.core.Core.core;
+import io.dagger.client.modules.core.Container;
+
+Container base = core().container().from("alpine:3.24");
+```
+
+`core()` uses the ambient session; `core(dag)` takes one you already hold.
+`io.dagger.client` itself holds only hand-written code — `Dagger`, `Session`,
+`QueryBuilder` and the rest of the runtime — so nothing generated is privileged.
+
+> [!WARNING]
+> `dag().container()` no longer exists. `Dagger.dag()` returns a `Session`, not
+> a generated client, and core is reached as `core()` after a static import of
+> `io.dagger.client.modules.core.Core.core`. Every core type moves with it:
+> `io.dagger.client.Container` becomes
+> `io.dagger.client.modules.core.Container`. `Dagger.connect()` returns an
+> `AutoCloseableSession` in place of `AutoCloseableClient`.
+
 ## Module clients
 
 Module dependencies are replaced by generated module clients:
@@ -125,10 +151,14 @@ import static io.dagger.client.modules.sdkhelpers.SdkHelpers.sdkHelpers;
 sdkHelpers().moduleManifest().generate();
 ```
 
-The core client is not extended with an accessor for it. A client package is
+Core is not extended with an accessor for it. A client package is
 self-contained: it reaches core types where they live, and nothing in core names
 it. Pass a session explicitly when you have one — `sdkHelpers(dag)` — or let the
-no-argument form use the ambient one.
+no-argument form use the ambient one. Core is entered the same way, which is the
+whole of the difference between a client and core: none.
+
+A module named `core` is refused, because the generated core API has that
+package. Alias the target to something else.
 
 In a module scope the client set becomes the module's dependency set. Each
 client is recorded in the manifest the module has — `dagger-module.toml`, or the
@@ -160,7 +190,8 @@ and regenerated whole:
 ```
 my-java-app/
   pom.xml                                                     # gains one profile, see below
-  dagger/src/main/java/io/dagger/client/**                    # the SDK runtime and the core API
+  dagger/src/main/java/io/dagger/client/**                    # the hand-written SDK runtime
+  dagger/src/main/java/io/dagger/client/modules/core/**       # the core API
   dagger/src/main/java/io/dagger/client/modules/<client>/**   # one package per client
 ```
 
