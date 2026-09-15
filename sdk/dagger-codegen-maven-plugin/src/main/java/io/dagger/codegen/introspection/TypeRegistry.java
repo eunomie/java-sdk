@@ -10,39 +10,49 @@ import java.util.Map;
  * QueryBuilder}, {@code Arguments}, ...), and itself. Every visitor used to name them by simple
  * name, which is only correct while everything lands in one package. Routing them through a
  * registry is the seam a second package needs.
+ *
+ * <p>Core and the runtime are two packages rather than one, because only core is generated: the
+ * runtime is hand-written and stays where it is however the generated packages are laid out.
  */
 public final class TypeRegistry {
 
   private final String targetPackage;
   private final String corePackage;
+  private final String runtimePackage;
   private final Map<String, String> packageByTypeName;
 
   private TypeRegistry(
-      String targetPackage, String corePackage, Map<String, String> packageByTypeName) {
+      String targetPackage,
+      String corePackage,
+      String runtimePackage,
+      Map<String, String> packageByTypeName) {
     this.targetPackage = targetPackage;
     this.corePackage = corePackage;
+    this.runtimePackage = runtimePackage;
     this.packageByTypeName = packageByTypeName;
   }
 
   /** Everything in one package. */
   public static TypeRegistry singlePackage(String pkg) {
-    return new TypeRegistry(pkg, pkg, Map.of());
+    return new TypeRegistry(pkg, pkg, pkg, Map.of());
   }
 
   /**
-   * Core in one package, and every type a module owns in that module's own package.
+   * Core in one package, the hand-written runtime in another, and every type a module owns in that
+   * module's own package.
    *
    * <p>Built once for a whole plan, so a module's package can name a core type and core can name a
    * module's type without either knowing where the other landed.
    */
   public static TypeRegistry acrossPackages(
-      String corePackage, Map<String, String> packageByTypeName) {
-    return new TypeRegistry(corePackage, corePackage, Map.copyOf(packageByTypeName));
+      String corePackage, String runtimePackage, Map<String, String> packageByTypeName) {
+    return new TypeRegistry(
+        corePackage, corePackage, runtimePackage, Map.copyOf(packageByTypeName));
   }
 
   /** The same resolution, writing into a different package. */
   public TypeRegistry emittingInto(String pkg) {
-    return new TypeRegistry(pkg, corePackage, packageByTypeName);
+    return new TypeRegistry(pkg, corePackage, runtimePackage, packageByTypeName);
   }
 
   /** The package this registry emits into. */
@@ -80,11 +90,11 @@ public final class TypeRegistry {
 
   /** A hand-written runtime class. */
   public ClassName runtime(String simpleName) {
-    return ClassName.get(corePackage, simpleName);
+    return ClassName.get(runtimePackage, simpleName);
   }
 
   /** A hand-written runtime class in a subpackage of the runtime. */
   public ClassName runtime(String subpackage, String simpleName) {
-    return ClassName.get(corePackage + "." + subpackage, simpleName);
+    return ClassName.get(runtimePackage + "." + subpackage, simpleName);
   }
 }

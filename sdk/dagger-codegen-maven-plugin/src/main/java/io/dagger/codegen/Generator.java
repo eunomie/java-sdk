@@ -20,8 +20,11 @@ import java.util.Set;
 /** Emits every package a {@link GenerationPlan} names, in one pass over one type registry. */
 public final class Generator {
 
-  /** The package core and the hand-written runtime share. */
+  /** The package the generated core API goes into. */
   public static final String CORE_PACKAGE = "io.dagger.client";
+
+  /** The package the hand-written runtime lives in, which no generation writes to. */
+  public static final String RUNTIME_PACKAGE = "io.dagger.client";
 
   private final Path outputDirectory;
   private final Charset encoding;
@@ -67,7 +70,8 @@ public final class Generator {
           (module, schema) -> SchemaMerge.requireCoreCovers(module, coreSchema, schema));
     }
 
-    TypeRegistry registry = TypeRegistry.acrossPackages(CORE_PACKAGE, packageByTypeName);
+    TypeRegistry registry =
+        TypeRegistry.acrossPackages(CORE_PACKAGE, RUNTIME_PACKAGE, packageByTypeName);
     emit(SchemaPartition.core(coreSchema), registry.emittingInto(CORE_PACKAGE), null, null);
     for (GenerationPlan.Target target : plan.targets()) {
       String pkg = packages.get(target.module());
