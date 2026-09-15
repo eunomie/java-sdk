@@ -63,6 +63,9 @@ type E2e {
 
   let vendoredBindings: String! = "sdk/src/main/java/io/dagger/client/Dagger.java"
   let entrypointPath: String! = "src/generated/java/io/dagger/gen/entrypoint/Entrypoint.java"
+  # Core is a client package: it lands under the same modules root as every
+  # other one, and its root type is reached the same way.
+  let corePackage: String! = "modules/core"
 
   """
   Fail the current check when a condition is false.
@@ -172,6 +175,18 @@ type E2e {
     assertAdded(changes, newModulePath + "/src/main/java/io/dagger/modules/newapp/NewApp.java")
     assertAdded(changes, newModulePath + "/" + vendoredBindings)
     assertAdded(changes, newModulePath + "/" + entrypointPath)
+    # Core is generated as a client package, so nothing lands flat beside the
+    # hand-written runtime and there is no Client to reach through the session.
+    let generatedRoot = newModulePath + "/sdk/src/generated/java/io/dagger/client"
+    assertAdded(changes, generatedRoot + "/" + corePackage + "/Core.java")
+    # Asserted as an equality rather than as the absence of Client.java: a
+    # negative on a path that moved would pass for the wrong reason.
+    let generatedEntries = generated.directory("/" + generatedRoot).entries
+    assert(
+      generatedEntries.join(", ") == "modules/",
+      "the generated tree should hold client packages alone, not: "
+        + generatedEntries.join(", "),
+    )
     assert(
       changes.modifiedPaths.length == 0,
       "initializing a scope modified existing files: " + changes.modifiedPaths.join(", "),
@@ -294,19 +309,22 @@ type E2e {
       "no ClientDep.java under " + clientPackage + ", only: " + bindings.join(", "),
     )
     assert(
-      contains(withClient.directory("/" + bindingsDir).entries, "ClientDep.java") == false,
+      contains(
+        withClient.directory("/" + bindingsDir + "/" + corePackage).entries,
+        "ClientDep.java",
+      ) == false,
       "a client's types belong to its own package, not to core",
     )
     # The entry point is a static method on the client's own root type, so a
     # caller writes clientDep(...) after one import rather than reaching through
-    # a global dag(). Core is left untouched by the client.
+    # core. Core is left untouched by the client, and is entered the same way.
     assertContains(
       withClient.file("/" + clientPackage + "/ClientDep.java").contents,
       "public static ClientDep clientDep(",
       "the client package should carry its own entry point",
     )
     assertNotContains(
-      withClient.file("/" + bindingsDir + "/Client.java").contents,
+      withClient.file("/" + bindingsDir + "/" + corePackage + "/Core.java").contents,
       "clientdep",
       "core should not name a client package",
     )
@@ -329,9 +347,17 @@ type E2e {
       withoutClient.directory("/" + bindingsDir).exists("modules/clientdep") == false,
       "removing the client should drop its package",
     )
+    # Core stays: the modules tree is where every client package lives, core
+    # included, so removing the last target empties it down to core alone.
+    # A directory entry carries a trailing slash, a file does not.
+    let remaining = withoutClient.directory("/" + bindingsDir + "/modules").entries
     assert(
-      withoutClient.directory("/" + bindingsDir).exists("modules") == false,
-      "removing the last client should drop the modules tree",
+      contains(remaining, "core/"),
+      "removing the last client should leave core: " + remaining.join(", "),
+    )
+    assert(
+      remaining.length == 1,
+      "removing the last client should leave core alone: " + remaining.join(", "),
     )
 
     null
@@ -379,8 +405,10 @@ type E2e {
     # Core names no client package: a target is reached through its own package
     # and its own entry point, never by extending the global client.
     assertNotContains(
-      generated.file("/" + standaloneSourceRoot + "/io/dagger/client/Client.java").contents,
-      "io.dagger.client.modules",
+      generated
+        .file("/" + standaloneSourceRoot + "/io/dagger/client/" + corePackage + "/Core.java")
+        .contents,
+      "io.dagger.client.modules.clientdep",
       "core should not name a client package",
     )
 
@@ -466,7 +494,11 @@ type E2e {
         "-f",
         "target/classes/io/dagger/client/modules/sdkhelpers/SdkHelpers.class",
       ])
-      .withExec(["test", "-f", "target/classes/io/dagger/client/Client.class"])
+      .withExec([
+        "test",
+        "-f",
+        "target/classes/io/dagger/client/" + corePackage + "/Core.class",
+      ])
       .sync
 
     null
@@ -561,20 +593,23 @@ type E2e {
     # arguments holder is nested in the client's own root type, so it travels
     # with the method rather than staying behind on core.
     assertContainsAll(bindings, [
-      "public static ClientDefaults clientDefaults(Client dag) {",
+      "public static ClientDefaults clientDefaults(Session dag) {",
       "public static ClientDefaults clientDefaults() {",
-      "public static ClientDefaults clientDefaults(Client dag, ClientDefaultsArguments optArgs) {",
+      "public static ClientDefaults clientDefaults(Session dag, ClientDefaultsArguments optArgs) {",
       "public static ClientDefaults clientDefaults(ClientDefaultsArguments optArgs) {",
       "public static class ClientDefaultsArguments",
     ])
     assertNotContains(
       bindings,
-      "clientDefaults(Client dag, String name",
+      "clientDefaults(Session dag, String name",
       "an argument with a default should not be a required parameter",
     )
     assertNotContains(
       generated
-        .file("/" + defaultsAppPath + "/sdk/src/generated/java/io/dagger/client/Client.java")
+        .file(
+          "/" + defaultsAppPath + "/sdk/src/generated/java/io/dagger/client/" + corePackage
+            + "/Core.java",
+        )
         .contents,
       "clientDefaults",
       "core should not gain an accessor for a client",
@@ -653,6 +688,11 @@ type E2e {
       "res.orElse(null)",
       "the Optional return should be unwrapped before serialization",
     )
+    assertContains(
+      generated,
+      "import static io.dagger.client.modules.core.Core.core;",
+      "the entrypoint should enter core through its own package",
+    )
 
     null
   }
@@ -661,9 +701,9 @@ type E2e {
   let nullableReturnSource: String! {
     "package io.dagger.modules.newapp;\n"
       + "\n"
-      + "import static io.dagger.client.Dagger.dag;\n"
+      + "import static io.dagger.client.modules.core.Core.core;\n"
       + "\n"
-      + "import io.dagger.client.Directory;\n"
+      + "import io.dagger.client.modules.core.Directory;\n"
       + "import io.dagger.module.annotation.Function;\n"
       + "import io.dagger.module.annotation.Object;\n"
       + "import java.util.Optional;\n"
@@ -675,7 +715,7 @@ type E2e {
       + "    if (!found) {\n"
       + "      return Optional.empty();\n"
       + "    }\n"
-      + "    return Optional.of(dag().directory().withNewFile(\"found\", \"\"));\n"
+      + "    return Optional.of(core().directory().withNewFile(\"found\", \"\"));\n"
       + "  }\n"
       + "}\n"
   }
