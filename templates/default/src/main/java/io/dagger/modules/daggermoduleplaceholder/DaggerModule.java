@@ -1,11 +1,11 @@
 package io.dagger.modules.daggermoduleplaceholder;
 
-import static io.dagger.client.Dagger.dag;
+import static io.dagger.client.modules.core.Core.core;
 
-import io.dagger.client.Container;
 import io.dagger.client.exception.DaggerQueryException;
-import io.dagger.client.Directory;
-import io.dagger.client.Workspace;
+import io.dagger.client.modules.core.Container;
+import io.dagger.client.modules.core.Directory;
+import io.dagger.client.modules.core.Workspace;
 import io.dagger.module.annotation.Default;
 import io.dagger.module.annotation.Function;
 import io.dagger.module.annotation.Object;
@@ -27,7 +27,7 @@ public class DaggerModule {
   /** A container with the workspace source, ready to build. */
   @Function
   public Container container() {
-    return dag()
+    return core()
     .container()
     .from(this.baseImageAddress)
     .withDirectory("/src", this.source)
