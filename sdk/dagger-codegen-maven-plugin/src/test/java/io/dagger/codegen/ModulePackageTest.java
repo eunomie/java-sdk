@@ -55,6 +55,18 @@ class ModulePackageTest {
         .hasMessageContaining("leading ASCII letter");
   }
 
+  /** Core is generated under this root too, so its segment is taken before any target asks. */
+  @Test
+  void aModuleNamedCoreIsRefused() {
+    assertThatThrownBy(() -> ModulePackage.packagesFor(List.of("core")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("io.dagger.client.modules.core")
+        .hasMessageContaining("generated core API");
+    assertThatThrownBy(() -> ModulePackage.segmentFor("Co-re"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("io.dagger.client.modules.core");
+  }
+
   @Test
   void aNameJavaReservesIsRefused() {
     assertThatThrownBy(() -> ModulePackage.segmentFor("package"))

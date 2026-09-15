@@ -14,6 +14,9 @@ import javax.lang.model.SourceVersion;
  * {@code sdk-helpers} becomes {@code sdkhelpers}. Distinct module names can normalize to the same
  * segment, which would make one module's bindings overwrite another's, so the mapping is computed
  * for a whole target set at once and refuses a set it cannot separate.
+ *
+ * <p>One segment is spoken for before any target asks: core is generated under this root too, so
+ * {@value #CORE_SEGMENT} is refused whatever the target set.
  */
 public final class ModulePackage {
 
@@ -68,6 +71,14 @@ public final class ModulePackage {
     if (RESERVED.contains(candidate) || !SourceVersion.isName(candidate)) {
       throw new IllegalArgumentException(
           String.format("module %s normalizes to %s, which Java reserves", moduleName, candidate));
+    }
+    if (CORE_SEGMENT.equals(candidate)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "module %s normalizes to %s, where the generated core API is emitted; core is a"
+                  + " client package like any other and %s.%s is taken. Rename or alias the"
+                  + " module.",
+              moduleName, candidate, ROOT, CORE_SEGMENT));
     }
     return candidate;
   }
