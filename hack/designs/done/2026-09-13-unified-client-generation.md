@@ -12,7 +12,8 @@ This document uses one word per concept.
 | **target** | A Dagger module that Java code calls. |
 | **scope** | A directory the SDK generates into. A *module scope* holds a Dagger module. A *standalone scope* is an ordinary Maven project that only calls targets. |
 | **bindings** | The generated Java code. |
-| **client package** | `io.dagger.client.modules.<target>`, holding one target's bindings. |
+| **client package** | `io.dagger.client.modules.<name>`, holding one client's bindings. Core has one, `io.dagger.client.modules.core`; so does each target. |
+| **session** | `io.dagger.client.Session`: hand-written, owns the engine connection, and is what every entry point takes. |
 | **target descriptor** | The generated record of one target's name, reference and pin, used to serve it. |
 
 The engine and its configuration use "client" for what this document calls a
@@ -175,23 +176,56 @@ built from `dagger/dagger#13992` is out of date.
 ### The generated layout
 
 ```
-io.dagger.client                          core API and the hand-written runtime
+io.dagger.client                          the hand-written runtime
+io.dagger.client.modules.core             the core API
 io.dagger.client.modules.<target>         one package per target
 ```
 
-`io.dagger.client` keeps its present meaning and contents: the hand-written
-runtime (`Dagger`, `QueryBuilder`, `engineconn`, `exception`, `graphql`,
-`telemetry`) and the generated core types, including the generated `Client`
-class that binds the GraphQL `Query` root. `Dagger.dag()` still returns that
-`Client`, and core is still reached as `dag().container()`. No module written
-against this SDK changes the way it calls core.
+`io.dagger.client` holds hand-written code and nothing else: `Dagger`,
+`Session`, `QueryBuilder`, `Arguments`, `InputValue`, `Scalar`, `IDAble`, the
+serializers, `ModuleTarget`, `ModuleTargets`, `engineconn`, `exception`,
+`graphql`, `telemetry`. No generation writes into it.
+
+Core is generated into `io.dagger.client.modules.core`, under the same root as
+every target, and is reached the way a target is:
+
+```java
+import static io.dagger.client.modules.core.Core.core;
+
+core().container()
+```
+
+`core(dag)` names a session, `core()` takes the ambient one. `Core` is the
+generated class that binds the GraphQL `Query` root; `Client` no longer exists,
+and neither does `dag().container()`.
+
+What makes that possible is that `Dagger.dag()` stops returning a generated
+type. `Session` is hand-written, owns the connection and exposes the query
+builder every generated package chains from, and is what every entry point
+takes. `AutoCloseableSession` replaces `AutoCloseableClient`. Core is then a
+client package like any other: nothing generated is privileged, and
+`core(dag())` and `sdkHelpers(dag())` are the same shape.
+
+One asymmetry survives, and it is a link-time one rather than an API one. The
+hand-written runtime still imports generated core: `Telemetry` needs
+`FunctionCall` and `FunctionCallArgValue`, which are core schema types, and the
+generated `Version` constant lands in core because that is where the version
+visitor emits. So core is *generated* like any other client and *reached* like
+any other client, but it is not unlinked from the runtime the way another client
+is. `Telemetry`'s dependency is inherent — tracing a module function call needs
+the type that describes one. `Version` is merely misfiled: it is a codegen
+artifact rather than a schema type, and emitting it into the runtime package
+would remove it. Neither is worth a second break on its own; both are recorded
+here so the claim above is read as "core has no privileged API" rather than
+"core is entirely unexceptional".
 
 Each target gets one package under `io.dagger.client.modules`, named from the
 target's final name. The target's own types live there and nowhere else. Nesting
 the targets one level down is what makes that safe: a target named `graphql` or
 `exception` becomes `io.dagger.client.modules.graphql`, which cannot collide
-with the runtime's own `io.dagger.client.graphql`. Only names Java itself
-reserves are refused, and two names that normalize to one package segment.
+with the runtime's own `io.dagger.client.graphql`. Names Java itself reserves
+are refused, two names that normalize to one package segment are refused, and so
+is `core`, which the generated core API has.
 
 The way into a target moves there too, as a static method on the target's own
 root type:
@@ -204,7 +238,8 @@ sdkHelpers().moduleManifest()
 
 Core is not extended with an accessor. One import is the whole of the
 integration, and a caller that never names a session gets the ambient one; a
-caller that has one passes it, as `sdkHelpers(dag)`.
+caller that has one passes it, as `sdkHelpers(dag)`. Core is entered by the same
+two forms, which is the whole of the difference between core and a target: none.
 
 ### What belongs to core and what belongs to a client package
 
@@ -471,16 +506,38 @@ every module generation. It is not needed here: a module's own types are its own
 hand-written Java, and the current SDK does not generate them either, because
 the module-facing schema holds core and dependencies only.
 
-**Split the session from the core client.** The abandoned attempt moved the
-hand-written runtime to `io.dagger.sdk`, the generated core to `io.dagger.core`,
-made `Dagger.dag()` return a new `Session` handle, and made core reachable as
-`core(dag())` so that core would be "a target like any other". The symmetry is
-real. The cost is that `dag().container()`, the most common expression in every
-Java module, becomes `core(dag()).container()`, every existing module must be
-rewritten, and the annotation processor's many references to core types move
-with it. The design here gets package separation without that. A `Session` type
-that owns the connection instead of a generated class remains a reasonable
-tidy-up on its own; it is not part of this change.
+**Make core a target like any other — rejected, then adopted.** The abandoned
+attempt moved the hand-written runtime to `io.dagger.sdk`, the generated core to
+`io.dagger.core`, made `Dagger.dag()` return a new `Session` handle, and made
+core reachable as `core(dag())`. This document first rejected it: the symmetry
+was real, but `dag().container()` is the most common expression in every Java
+module, and package separation could be had without rewriting it.
+
+That is reversed. Core is generated into `io.dagger.client.modules.core`,
+reached as `core(dag())` or `core()`, and `dag().container()` is gone.
+
+Three things changed the arithmetic.
+
+- The owner asked for it. The symmetry is the point of the feature, not a
+  side-effect of it, and one shape for "reach a client" is worth more than the
+  call sites it costs.
+- This series already breaks every module that uses a target: its types move
+  package and its imports change. Moving core in the same release is one
+  migration rather than two, and a second break later would be the expensive
+  one.
+- The rejection undercharged for what it was keeping. Leaving core flat in
+  `io.dagger.client` leaves the generated `Client` class there, so the
+  hand-written `Dagger.dag()` returns a generated type and every entry point in
+  every client package takes one. The `Session` this document called "a
+  reasonable tidy-up on its own" is not separable: it is what lets core stop
+  being special.
+
+What it kept from the rejection is the package root. The abandoned attempt split
+the tree three ways, into `io.dagger.sdk`, `io.dagger.core` and one package per
+target; here the runtime stays at `io.dagger.client` and core joins the targets
+under `io.dagger.client.modules`. Only generated code moves, so a module's
+imports of the runtime — `io.dagger.client.exception`, the annotations — are
+untouched, and a target's package is spelled the same as before.
 
 **Serve every target eagerly when the session opens.** Simpler than serving from
 the entry point: one bootstrap, run once. Rejected because it makes an unusable
@@ -511,7 +568,7 @@ parameter already exists, but generated clients do not use it.
 | Component | Change |
 | --- | --- |
 | `sdk/dagger-codegen-maven-plugin` | Read `@sourceMap` attribution; partition a schema into core and one target; validate names; resolve type references through a registry so more than one output package is possible; take a generation plan instead of a single schema; emit a client's entry points and the descriptor they serve; a goal that inserts the Maven profile. |
-| `sdk/dagger-java-sdk` | Public query transport so generated code outside `io.dagger.client` can build queries; `ModuleTarget` and `ModuleTargets`; `CLISession`; the `Connection` fallback and the `--load-workspace-modules` flag; a synchronized `Dagger.dag()`. |
+| `sdk/dagger-java-sdk` | Public query transport so generated code outside `io.dagger.client` can build queries; `ModuleTarget` and `ModuleTargets`; `CLISession`; the `Connection` fallback and the `--load-workspace-modules` flag; a synchronized `Dagger.dag()`; `Session` and `AutoCloseableSession`, which is what `dag()` and `connect()` return once no generated type is left in `io.dagger.client`. |
 | `codegen.dang` (new) | Build a plan, run the plugin, vendor the result. Shared by both scope kinds. |
 | `mod.dang` | Build a module scope's plan: core from the module-facing schema, one entry per recorded target. |
 | `client.dang` (new) | Build a standalone scope's plan, merge core, emit the descriptors, insert the Maven profile. |
@@ -529,8 +586,11 @@ compiles generated output; these extend it.
   target's contributed fields on `Query` and on `Binding` stay on the core
   class; a core-only schema partitions to itself.
 - The type registry resolves a core type referenced from a client package to
+  `io.dagger.client.modules.core`, and a hand-written runtime class to
   `io.dagger.client`.
-- Plan execution: a two-target plan emits three packages and one `Client`.
+- Plan execution: a two-target plan emits three packages, one of them core.
+- Core's entry point: `Core.core(Session)` and `Core.core()`, in
+  `io.dagger.client.modules.core`, with no descriptor and nothing served.
 - Core merge: two targets contributing to `Binding` merge; two targets whose
   bare cores differ are refused, and the message names both targets and both
   engine versions; reversing the target order changes nothing.
@@ -632,13 +692,17 @@ to a different version, will conflict. The profile is one marked element and is
 removable, generation refuses to overwrite an unmarked profile of the same id,
 and the generated tree is inert without the profile.
 
-**Breaking change for existing modules that use targets.** A target's types move
-from `io.dagger.client.<Type>` to
-`io.dagger.client.modules.<target>.<Type>`. Call sites are unchanged, imports
-are not, and the nested arguments class stays where it is. Targets are recent
-and the change is mechanical, so no compatibility shim is proposed. An
-end-to-end check compiles a module written against the old layout after
-migration, and the README documents the move.
+**Breaking change for every existing module.** A target's types move from
+`io.dagger.client.<Type>` to `io.dagger.client.modules.<target>.<Type>`, and
+core's move to `io.dagger.client.modules.core.<Type>`. For a target the call
+sites are unchanged and only the imports are; for core both change, because
+`dag().container()` becomes `core().container()`. `Dagger.dag()` returns a
+`Session`, and `AutoCloseableClient` is `AutoCloseableSession`. The change is
+mechanical but it is not small, and no compatibility shim is proposed: a
+deprecated `Client` would have to be generated from the same schema into the
+package the runtime occupies, which is the arrangement being removed. The
+README documents both moves, and `engine-e-2-e:dev-sdk-check` runs a scaffolded
+module on a real engine, so the new call shape is proven rather than asserted.
 
 **Size.** This changes the code generator, the runtime library, the generation
 driver and the test suite together. See **On shipping this as one change**.
@@ -679,7 +743,7 @@ graph TD
   CE["one entry per target:<br/>target.clientSchemaIntrospectionJSON,<br/>owned types only"] --> P["codegen.dang: the plan"]
   P --> G["dagger-codegen-maven-plugin<br/>one Maven invocation, every package"]
 
-  G --> CORE["io.dagger.client<br/>core types, all their fields"]
+  G --> CORE["io.dagger.client.modules.core<br/>core types, all their fields"]
   G --> CLI["io.dagger.client.modules.&lt;target&gt;<br/>one package per target"]
 
   CORE --> OUT
@@ -706,7 +770,7 @@ sequenceDiagram
     CLI-->>SDK: {"port", "session_token"}
     SDK->>Eng: attach
   end
-  SDK-->>App: Client
+  SDK-->>App: Session
   App->>SDK: TheTarget.theTarget(dag)
   alt the package carries a descriptor
     SDK->>Eng: moduleSource(ref).withName(name).asModule().serve()
@@ -800,6 +864,31 @@ and the documentation.
     cache mount is per-exec, so installing the plugin and exporting it as two
     execs let a concurrent check overwrite the jar in between. One exec closes
     it.
+
+Nine more land the reversal recorded under **Alternatives considered**.
+
+20. **`codegen: name the runtime package apart from the generated core`** — the
+    registry resolved a schema type and a hand-written runtime class through one
+    package name. Held apart first, so the move is a change of one constant. No
+    output changes.
+21. **`java-sdk: generate core as a client package`** — the atomic one.
+    `io.dagger.client.Session`, `AutoCloseableSession`, a `Dagger.dag()` that
+    returns a session, core emitted into `io.dagger.client.modules.core` with
+    `Core` as its root type and `ClientEntryPoint` split into a core kind and a
+    module kind, and the annotation processor rewritten to enter core by name.
+    It does not divide further: the processor cannot compile against a `Core`
+    that does not exist, and `dag()` cannot return a `Session` while the
+    processor calls `dag().module()`.
+22. **`codegen: refuse a module named core`** — the segment is taken.
+23. **`templates: reach core through its own package`**.
+24. **`e2e: assert core where it now lives`**.
+25. **`engine-e2e: pin core's package in the initialized module`**.
+26. **`README: document core as a client package`**.
+27. **`hack/designs: record core as a client package`** — this entry and the
+    rewritten alternative.
+28. **`prebuilt: rebuild the codegen plugin`** — again, for the same reason as
+    patch 14: generation seeds from `prebuilt/m2` and never compiles the plugin
+    sources when it exists, so a stale jar silently runs the old generator.
 
 Four things differ from what this document first planned, and the reasons are
 worth keeping. The formatter patch was not planned; it was added because the
